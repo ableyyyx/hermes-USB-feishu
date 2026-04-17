@@ -62,6 +62,8 @@ finally:
 
 **All `load_config()` calls inside Gateway-mode code must use this pattern** — including AIAgent initialization (`run_agent.py:1196`) and any future config reads.
 
+**Preferred fix** (already applied): `get_config_path()` and `get_env_path()` in `hermes_constants.py` now always bypass the ContextVar via `_get_base_hermes_home()`. Any function that calls `load_config()` automatically gets the correct base config without extra ceremony.
+
 ## Three Identity/Memory Files
 
 | File | Path | Owner | Trigger |

@@ -76,12 +76,24 @@
       ]
     },
     {
+      "id": "feat-007",
+      "name": "Fix: get_config_path bypasses ContextVar + FEISHU_HOME_CHANNEL",
+      "description": "Root fix for all auxiliary LLM / compression warnings: get_config_path() and get_env_path() now use _get_base_hermes_home() (env var, not ContextVar) so load_config() always returns the operator's base config regardless of per-user gateway context. Also sets FEISHU_HOME_CHANNEL in .env to suppress the home channel warning.",
+      "dependencies": ["feat-001", "feat-005"],
+      "status": "done",
+      "evidence": "Verified: with ContextVar set to /tmp/user_abc, get_config_path() still returns base ~/.hermes/config.yaml. get_skills_dir() correctly returns /tmp/user_abc/skills. Fixes auxiliary LLM warning and home channel warning without touching auxiliary_client.py.",
+      "files_changed": [
+        "hermes_constants.py",
+        "~/.hermes/.env"
+      ]
+    },
+    {
       "id": "feat-006",
       "name": "Fix: AIAgent Config + Document MEMORY/USER/SOUL files",
       "description": "Apply clear-ContextVar pattern to run_agent.py AIAgent init so operator memory/skill config is read from base home. Document MEMORY.md/USER.md/SOUL.md distinction: SOUL.md pre-created at profile init, MEMORY.md/USER.md auto-written by agent after N turns or /reset.",
       "dependencies": ["feat-001", "feat-005"],
       "status": "done",
-      "evidence": "Syntax check passes. MEMORY.md not created = expected (only 1 message per user, needs 10 turns or /reset with >=4 msgs). Fixed architectural gap: run_agent.py now reads base config for memory settings.",
+      "evidence": "Syntax check passes. MEMORY.md not created = expected behavior (only casual food conversation, flush agent correctly decided nothing worth saving). Fixed architectural gap: run_agent.py now reads base config for memory settings.",
       "files_changed": [
         "run_agent.py",
         "CLAUDE.md",

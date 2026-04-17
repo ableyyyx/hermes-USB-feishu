@@ -246,13 +246,26 @@ def is_container() -> bool:
 # ─── Well-Known Paths ─────────────────────────────────────────────────────────
 
 
-def get_config_path() -> Path:
-    """Return the path to ``config.yaml`` under HERMES_HOME.
+def _get_base_hermes_home() -> Path:
+    """Return the BASE HERMES_HOME, ignoring any per-user ContextVar override.
 
-    Replaces the ``get_hermes_home() / "config.yaml"`` pattern repeated
-    in 7+ files (skill_utils.py, hermes_logging.py, hermes_time.py, etc.).
+    Use this for operator-level shared files (config.yaml, .env) that must
+    never be redirected to a per-user profile directory by the gateway's
+    ContextVar isolation mechanism.
     """
-    return get_hermes_home() / "config.yaml"
+    return Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+
+
+def get_config_path() -> Path:
+    """Return the path to ``config.yaml`` under the BASE HERMES_HOME.
+
+    Deliberately bypasses the per-user ContextVar override — config.yaml is
+    operator-level shared state, not per-user data.  In gateway multi-user
+    mode the ContextVar points to a user profile that has no config.yaml;
+    using it here would cause load_config() to return DEFAULT_CONFIG and lose
+    all operator settings (model routing, auxiliary LLM, etc.).
+    """
+    return _get_base_hermes_home() / "config.yaml"
 
 
 def get_skills_dir() -> Path:
@@ -260,10 +273,13 @@ def get_skills_dir() -> Path:
     return get_hermes_home() / "skills"
 
 
-
 def get_env_path() -> Path:
-    """Return the path to the ``.env`` file under HERMES_HOME."""
-    return get_hermes_home() / ".env"
+    """Return the path to the ``.env`` file under the BASE HERMES_HOME.
+
+    Deliberately bypasses the per-user ContextVar override — .env holds
+    operator API keys and is shared across all gateway users.
+    """
+    return _get_base_hermes_home() / ".env"
 
 
 # ─── Network Preferences ─────────────────────────────────────────────────────

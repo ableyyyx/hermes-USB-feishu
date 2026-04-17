@@ -1,5 +1,22 @@
 # Session Progress Log
 
+## Session: 2026-04-17 (feat-007: Fix auxiliary LLM warning + home channel warning)
+
+### Completed
+- **Root fix for ContextVar scope** (hermes_constants.py): `get_config_path()` and `get_env_path()` now use `_get_base_hermes_home()` (env var, ignoring ContextVar). This is the definitive fix — ALL `load_config()` callers automatically get the base config, including:
+  - `auxiliary_client.py` (5+ load_config() calls → auxiliary LLM compression warning fixed)
+  - `runtime_provider.py` (already fixed individually — now also covered at root level)  
+  - `run_agent.py` (already fixed individually — now also covered at root level)
+- **Home channel warning**: Added `FEISHU_HOME_CHANNEL=oc_dbedb525...` to `~/.hermes/.env`
+
+### Architecture clarification (write in CLAUDE.md)
+- `get_hermes_home()` = ContextVar-aware → per-user DATA paths (memories, skills, sessions)
+- `get_config_path()` = ContextVar-IGNORED → operator shared config
+- `get_env_path()` = ContextVar-IGNORED → operator shared API keys
+- `get_skills_dir()` = ContextVar-aware → per-user skills
+
+---
+
 ## Session: 2026-04-17 (Diagnostic: Why /reset didn't create MEMORY.md)
 
 ### Analysis
