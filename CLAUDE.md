@@ -35,6 +35,31 @@ The gateway uses `ContextVar` to isolate each Feishu user's data:
 - Only tools that access **per-user data** (memory, skills, sessions) need dynamic resolution
 - Background threads (`_spawn_background_review`, `_flush_memories`) must use `copy_context()`
 
+### Operator-Level Config Must Use Base Home
+
+**CRITICAL**: Functions that read **operator config** (model routing, API keys, provider) must NOT be affected by the per-user ContextVar. These are shared across ALL gateway users:
+
+| Path | Category | Must use |
+|------|----------|----------|
+| `config.yaml` | Model routing, API keys | Base home |
+| `auth.json` | Credentials | Base home (TODO) |
+| `.env` | API keys | Base home ✅ (module-level `_env_path`) |
+
+**Pattern for operator-config functions** (see `hermes_cli/runtime_provider.py:_get_model_config()`):
+```python
+from hermes_constants import _HERMES_HOME_CTX, set_hermes_home_ctx
+_ctx_override = _HERMES_HOME_CTX.get(None)
+if _ctx_override is not None:
+    set_hermes_home_ctx(None)
+try:
+    config = load_config()   # reads from base home
+finally:
+    if _ctx_override is not None:
+        set_hermes_home_ctx(_ctx_override)
+```
+
+**Why this matters**: When ContextVar points to a user profile (no `config.yaml`), `load_config()` returns empty config → provider defaults to "auto" → OpenRouter → HTTP 401. This was observed in production with real Feishu users on 2026-04-17.
+
 ## Verification Commands
 
 ```bash

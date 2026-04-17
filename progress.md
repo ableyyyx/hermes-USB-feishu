@@ -1,5 +1,21 @@
 # Session Progress Log
 
+## Session: 2026-04-17 (Hotfix: Operator Config + ContextVar Scope)
+
+### Completed
+- **feat-005**: Fix `_get_model_config()` reading from user profile (HTTP 401 bug)
+  - **Root cause**: ContextVar → `load_config()` → `get_config_path()` → user profile (no config.yaml) → empty config → provider="auto" → OpenRouter → 401
+  - **Fix**: `hermes_cli/runtime_provider.py:_get_model_config()` temporarily clears ContextVar before `load_config()`
+  - **Documented**: New pitfall in AGENTS.md, new rule in CLAUDE.md "Operator-Level Config Must Use Base Home"
+  - **Lesson**: ContextVar scope must be limited to PER-USER DATA only. Operator config (model routing, API keys) is always shared and must use base home.
+  - Observed with real Feishu users: ou_0e9710d3c71ae6a6b89a640460e845d1, ou_2ff2be6c69f565f4f9a6c51730c053cf, ou_e35410f852dacadaced24f89d5743de1
+
+### Open Questions / Future Work
+- `auth.json` is also per-user (written to user profile by `ensure_hermes_home()`). Currently OK because user profile auth.json inherits credentials on creation. But if credentials change, user profiles won't auto-update. Consider making auth.json use base home too.
+- Other files in user profile that shouldn't be there: `SOUL.md`, `models_dev_cache.json`, `cron/`. These are side effects of `ensure_hermes_home()` running with ContextVar set. Non-critical for now.
+
+---
+
 ## Session: 2026-04-17 (Per-User Isolation + Harness Setup)
 
 ### Completed

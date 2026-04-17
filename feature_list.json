@@ -60,6 +60,20 @@
       "files_changed": [
         "tests/gateway/test_per_user_gateway_isolation.py"
       ]
+    },
+    {
+      "id": "feat-005",
+      "name": "Fix: Operator Config Isolation (401 / Wrong Provider Bug)",
+      "description": "Hotfix for per-user ContextVar being too broad: _get_model_config() was reading from user profile (no config.yaml) → empty config → provider=auto → OpenRouter → HTTP 401. Fixed by clearing ContextVar in _get_model_config() before calling load_config().",
+      "dependencies": ["feat-001"],
+      "status": "done",
+      "evidence": "Syntax check passes. Rule documented in CLAUDE.md and AGENTS.md. Observed in production 2026-04-17 with real Feishu users. Pattern: operator-level config functions must clear ContextVar before reading.",
+      "files_changed": [
+        "hermes_cli/runtime_provider.py",
+        "CLAUDE.md",
+        "AGENTS.md",
+        "progress.md"
+      ]
     }
   ]
 }

@@ -71,7 +71,20 @@ def _auto_detect_local_model(base_url: str) -> str:
 
 
 def _get_model_config() -> Dict[str, Any]:
-    config = load_config()
+    # Model routing config (api_key, base_url, provider) is operator-level —
+    # shared across all gateway users. Temporarily clear any per-user ContextVar
+    # override so load_config() reads from the base HERMES_HOME, not a user
+    # profile directory that has no config.yaml and would return an empty config
+    # (causing the provider to default to "auto" → OpenRouter).
+    from hermes_constants import _HERMES_HOME_CTX, set_hermes_home_ctx
+    _ctx_override = _HERMES_HOME_CTX.get(None)
+    if _ctx_override is not None:
+        set_hermes_home_ctx(None)
+    try:
+        config = load_config()
+    finally:
+        if _ctx_override is not None:
+            set_hermes_home_ctx(_ctx_override)
     model_cfg = config.get("model")
     if isinstance(model_cfg, dict):
         cfg = dict(model_cfg)

@@ -423,6 +423,32 @@ automatically scope to the active profile.
 
 ## Known Pitfalls
 
+### DO NOT let operator-level config functions read from user profile (ContextVar bug)
+
+**Observed in production 2026-04-17.** When the gateway sets the per-user ContextVar,
+`get_config_path()` returns the user profile's `config.yaml` (which doesn't exist).
+This causes `load_config()` to return empty config → provider defaults to "auto" → OpenRouter
+→ HTTP 401 with the Anthropic key.
+
+**Rule**: Any function that reads **operator config** (model routing, API keys, provider) must
+temporarily clear the ContextVar before calling `load_config()`:
+
+```python
+from hermes_constants import _HERMES_HOME_CTX, set_hermes_home_ctx
+_ctx_override = _HERMES_HOME_CTX.get(None)
+if _ctx_override is not None:
+    set_hermes_home_ctx(None)
+try:
+    config = load_config()
+finally:
+    if _ctx_override is not None:
+        set_hermes_home_ctx(_ctx_override)
+```
+
+**Fixed in**: `hermes_cli/runtime_provider.py:_get_model_config()` (line 73).
+**Scope of ContextVar**: Only per-user DATA (memories, skills, sessions, state.db).
+Config/auth/env are operator-level and should always use the base home.
+
 ### DO NOT hardcode `~/.hermes` paths
 Use `get_hermes_home()` from `hermes_constants` for code paths. Use `display_hermes_home()`
 for user-facing print/log messages. Hardcoding `~/.hermes` breaks profiles — each profile
