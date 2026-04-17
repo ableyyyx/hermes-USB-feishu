@@ -1192,10 +1192,20 @@ class AIAgent:
         from tools.todo_tool import TodoStore
         self._todo_store = TodoStore()
         
-        # Load config once for memory, skills, and compression sections
+        # Load config once for memory, skills, and compression sections.
+        # Clear any per-user ContextVar so this reads from the operator's
+        # base config (memory_enabled, nudge_interval, etc. are shared settings).
         try:
             from hermes_cli.config import load_config as _load_agent_config
-            _agent_cfg = _load_agent_config()
+            from hermes_constants import _HERMES_HOME_CTX, set_hermes_home_ctx
+            _ctx = _HERMES_HOME_CTX.get(None)
+            if _ctx is not None:
+                set_hermes_home_ctx(None)
+            try:
+                _agent_cfg = _load_agent_config()
+            finally:
+                if _ctx is not None:
+                    set_hermes_home_ctx(_ctx)
         except Exception:
             _agent_cfg = {}
 

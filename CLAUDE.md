@@ -60,6 +60,22 @@ finally:
 
 **Why this matters**: When ContextVar points to a user profile (no `config.yaml`), `load_config()` returns empty config → provider defaults to "auto" → OpenRouter → HTTP 401. This was observed in production with real Feishu users on 2026-04-17.
 
+**All `load_config()` calls inside Gateway-mode code must use this pattern** — including AIAgent initialization (`run_agent.py:1196`) and any future config reads.
+
+## Three Identity/Memory Files
+
+| File | Path | Owner | Trigger |
+|------|------|-------|---------|
+| `SOUL.md` | `get_hermes_home()/SOUL.md` | Operator (setup wizard) | Created at profile init via `ensure_hermes_home()` |
+| `MEMORY.md` | `get_memory_dir()/MEMORY.md` | Agent (memory tool) | Every `nudge_interval` turns (default 10), OR `/reset` after ≥4 msgs |
+| `USER.md` | `get_memory_dir()/USER.md` | Agent (user_profile tool) | Same as MEMORY.md |
+
+**To trigger MEMORY.md creation** for a new user:
+1. Have a conversation of ≥4 messages, then send `/reset` — OR
+2. Have a conversation of ≥10 turns (background review fires automatically)
+
+**SOUL.md** is pre-created at profile init and is the agent's personality. It's per-user by default (each user has their own agent identity at their profile path). It does NOT require conversation — it already exists.
+
 ## Verification Commands
 
 ```bash

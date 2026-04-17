@@ -74,6 +74,21 @@
         "AGENTS.md",
         "progress.md"
       ]
+    },
+    {
+      "id": "feat-006",
+      "name": "Fix: AIAgent Config + Document MEMORY/USER/SOUL files",
+      "description": "Apply clear-ContextVar pattern to run_agent.py AIAgent init so operator memory/skill config is read from base home. Document MEMORY.md/USER.md/SOUL.md distinction: SOUL.md pre-created at profile init, MEMORY.md/USER.md auto-written by agent after N turns or /reset.",
+      "dependencies": ["feat-001", "feat-005"],
+      "status": "done",
+      "evidence": "Syntax check passes. MEMORY.md not created = expected (only 1 message per user, needs 10 turns or /reset with >=4 msgs). Fixed architectural gap: run_agent.py now reads base config for memory settings.",
+      "files_changed": [
+        "run_agent.py",
+        "CLAUDE.md",
+        "AGENTS.md",
+        "progress.md",
+        "feature_list.json"
+      ]
     }
   ]
 }

@@ -1,5 +1,35 @@
 # Session Progress Log
 
+## Session: 2026-04-17 (Diagnostic: Why /reset didn't create MEMORY.md)
+
+### Analysis
+- User `ou_2ff2be6c` sent `/reset` but MEMORY.md wasn't created
+- **Root cause**: Session `20260417_164029_7b2d4a` had only 1 FAILED message (401 before the fix). `agent_failed_early = True` → no JSONL transcript written → `load_transcript()` found 0 messages → flush skipped (`len(history) < 4`)
+- **NOT a bug**: The system correctly skipped flushing an empty/failed session
+- **Verification**: Session `20260417_153901_4715708c.jsonl` (other user, successful) has 9 messages → flush would work correctly for that user
+- **How to reproduce memory creation**: Have ≥4 successful messages in a session, then send `/reset`
+
+### No code change needed — explanation only
+
+---
+
+## Session: 2026-04-17 (feat-006: AIAgent Config Fix + Memory File Documentation)
+
+### Completed
+- **feat-006**: Apply clear-ContextVar pattern to `run_agent.py` AIAgent initialization
+  - Line ~1196: `load_config()` now clears ContextVar before reading → uses base config for `memory_enabled`, `nudge_interval`, `flush_min_turns`, `toolsets`, etc.
+  - **Why MEMORY.md wasn't created**: NOT a bug. Sessions only had 1 message each. Background review needs ≥10 turns (default nudge_interval). Session flush needs ≥4 messages + `/reset` or expiry.
+  - **Documented** in CLAUDE.md: Three-file distinction table (SOUL.md / MEMORY.md / USER.md)
+  - **SOUL.md**: pre-created by `ensure_hermes_home()` at profile init, agent personality, per-user
+  - **MEMORY.md**: auto-written by agent's memory tool after N turns or /reset, per-user memories/
+  - **USER.md**: auto-written by user_profile tool, same triggers, per-user memories/
+
+### How to trigger MEMORY.md creation (for testing)
+1. Feishu user sends ≥4 messages in a conversation
+2. Send `/reset` → triggers memory flush → MEMORY.md created in `user_profiles/{id}/memories/`
+
+---
+
 ## Session: 2026-04-17 (Hotfix: Operator Config + ContextVar Scope)
 
 ### Completed

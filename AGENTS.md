@@ -445,9 +445,15 @@ finally:
         set_hermes_home_ctx(_ctx_override)
 ```
 
-**Fixed in**: `hermes_cli/runtime_provider.py:_get_model_config()` (line 73).
+**Fixed in**:
+- `hermes_cli/runtime_provider.py:_get_model_config()` (line 73) — model routing
+- `run_agent.py` (line ~1196) — AIAgent init memory/skills config
+
 **Scope of ContextVar**: Only per-user DATA (memories, skills, sessions, state.db).
 Config/auth/env are operator-level and should always use the base home.
+
+**Rule**: Any call to `load_config()` inside Gateway-mode code that reads operator settings
+(model routing, memory_enabled, nudge_interval, toolsets, etc.) needs the ContextVar cleared.
 
 ### DO NOT hardcode `~/.hermes` paths
 Use `get_hermes_home()` from `hermes_constants` for code paths. Use `display_hermes_home()`
