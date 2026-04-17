@@ -39,7 +39,7 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
-from hermes_constants import get_hermes_home, display_hermes_home
+from hermes_constants import get_hermes_home, get_skills_dir, display_hermes_home
 from typing import Dict, Any, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -76,9 +76,8 @@ def _security_scan_skill(skill_dir: Path) -> Optional[str]:
 import yaml
 
 
-# All skills live in ~/.hermes/skills/ (single source of truth)
-HERMES_HOME = get_hermes_home()
-SKILLS_DIR = HERMES_HOME / "skills"
+# All skills live in ~/.hermes/skills/ (single source of truth).
+# Resolved dynamically via get_skills_dir() for per-user isolation.
 
 MAX_NAME_LENGTH = 64
 MAX_DESCRIPTION_LENGTH = 1024
@@ -90,7 +89,7 @@ def _is_local_skill(skill_path: Path) -> bool:
     Skills found in external_dirs are read-only from the agent's perspective.
     """
     try:
-        skill_path.resolve().relative_to(SKILLS_DIR.resolve())
+        skill_path.resolve().relative_to(get_skills_dir().resolve())
         return True
     except ValueError:
         return False
@@ -203,9 +202,10 @@ def _validate_content_size(content: str, label: str = "SKILL.md") -> Optional[st
 
 def _resolve_skill_dir(name: str, category: str = None) -> Path:
     """Build the directory path for a new skill, optionally under a category."""
+    skills_dir = get_skills_dir()
     if category:
-        return SKILLS_DIR / category / name
-    return SKILLS_DIR / name
+        return skills_dir / category / name
+    return skills_dir / name
 
 
 def _find_skill(name: str) -> Optional[Dict[str, Any]]:
@@ -346,7 +346,7 @@ def _create_skill(name: str, content: str, category: str = None) -> Dict[str, An
     result = {
         "success": True,
         "message": f"Skill '{name}' created.",
-        "path": str(skill_dir.relative_to(SKILLS_DIR)),
+        "path": str(skill_dir.relative_to(get_skills_dir())),
         "skill_md": str(skill_md),
     }
     if category:
@@ -497,9 +497,9 @@ def _delete_skill(name: str) -> Dict[str, Any]:
     skill_dir = existing["path"]
     shutil.rmtree(skill_dir)
 
-    # Clean up empty category directories (don't remove SKILLS_DIR itself)
+    # Clean up empty category directories (don't remove skills dir itself)
     parent = skill_dir.parent
-    if parent != SKILLS_DIR and parent.exists() and not any(parent.iterdir()):
+    if parent != get_skills_dir() and parent.exists() and not any(parent.iterdir()):
         parent.rmdir()
 
     return {

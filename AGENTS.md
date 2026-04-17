@@ -396,9 +396,11 @@ automatically scope to the active profile.
    print("Config saved to ~/.hermes/config.yaml")
    ```
 
-3. **Module-level constants are fine** — they cache `get_hermes_home()` at import time,
-   which is AFTER `_apply_profile_override()` sets the env var. Just use `get_hermes_home()`,
-   not `Path.home() / ".hermes"`.
+3. **Module-level constants: CLI-only modules are fine, Gateway modules are NOT.**
+   CLI modules can cache `get_hermes_home()` at import time (after `_apply_profile_override()`).
+   However, **Gateway-loaded modules must NOT cache** — the gateway uses `ContextVar` to
+   override `HERMES_HOME` per-user at runtime. Use `get_skills_dir()`, `get_hermes_home()`,
+   etc. as function calls, not cached constants. See `tools/skills_tool.py` for the pattern.
 
 4. **Tests that mock `Path.home()` must also set `HERMES_HOME`** — since code now uses
    `get_hermes_home()` (reads env var), not `Path.home() / ".hermes"`:

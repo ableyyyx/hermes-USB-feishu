@@ -2456,7 +2456,9 @@ class AIAgent:
                     except Exception:
                         pass
 
-        t = threading.Thread(target=_run_review, daemon=True, name="bg-review")
+        import contextvars
+        ctx = contextvars.copy_context()
+        t = threading.Thread(target=ctx.run, args=(_run_review,), daemon=True, name="bg-review")
         t.start()
 
     def _apply_persist_user_message_override(self, messages: List[Dict]) -> None:

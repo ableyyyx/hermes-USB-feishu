@@ -5,16 +5,39 @@ without risk of circular imports.
 """
 
 import os
+from contextvars import ContextVar
 from pathlib import Path
+
+# Task-local override for HERMES_HOME — used by gateway to
+# scope each user to an isolated profile directory.
+_HERMES_HOME_CTX: ContextVar[str | None] = ContextVar(
+    "_HERMES_HOME_CTX", default=None
+)
 
 
 def get_hermes_home() -> Path:
     """Return the Hermes home directory (default: ~/.hermes).
 
-    Reads HERMES_HOME env var, falls back to ~/.hermes.
+    Resolution order:
+    1. ContextVar override (per-task, set by gateway for multi-user)
+    2. HERMES_HOME env var
+    3. ~/.hermes default
+
     This is the single source of truth — all other copies should import this.
     """
+    ctx = _HERMES_HOME_CTX.get(None)
+    if ctx is not None:
+        return Path(ctx)
     return Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+
+
+def set_hermes_home_ctx(path: str | Path | None) -> None:
+    """Set the task-local HERMES_HOME override.
+
+    Call this in gateway before processing each user's message.
+    Pass None to clear the override.
+    """
+    _HERMES_HOME_CTX.set(str(path) if path else None)
 
 
 def get_default_hermes_root() -> Path:

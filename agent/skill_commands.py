@@ -51,12 +51,14 @@ def _load_skill_payload(skill_identifier: str, task_id: str | None = None) -> tu
         return None
 
     try:
-        from tools.skills_tool import SKILLS_DIR, skill_view
+        from hermes_constants import get_skills_dir
+        from tools.skills_tool import skill_view
 
+        skills_dir = get_skills_dir()
         identifier_path = Path(raw_identifier).expanduser()
         if identifier_path.is_absolute():
             try:
-                normalized = str(identifier_path.resolve().relative_to(SKILLS_DIR.resolve()))
+                normalized = str(identifier_path.resolve().relative_to(skills_dir.resolve()))
             except Exception:
                 normalized = raw_identifier
         else:
@@ -81,7 +83,7 @@ def _load_skill_payload(skill_identifier: str, task_id: str | None = None) -> tu
         skill_dir = Path(abs_skill_dir)
     elif skill_path:
         try:
-            skill_dir = SKILLS_DIR / Path(skill_path).parent
+            skill_dir = skills_dir / Path(skill_path).parent
         except Exception:
             skill_dir = None
 

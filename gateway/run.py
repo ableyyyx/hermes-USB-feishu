@@ -661,6 +661,10 @@ class GatewayRunner:
             self._session_db = SessionDB()
         except Exception as e:
             logger.debug("SQLite session store not available: %s", e)
+
+        # Per-user SessionDB cache for multi-user isolation.
+        # Each user gets their own state.db in their profile directory.
+        self._user_session_dbs: Dict[str, Any] = {}
         
         # DM pairing store for code-based user authorization
         from gateway.pairing import PairingStore
@@ -854,11 +858,10 @@ class GatewayRunner:
     ):
         """Run the sync memory flush in a thread pool so it won't block the event loop."""
         loop = asyncio.get_running_loop()
+        ctx = copy_context()
         await loop.run_in_executor(
-            None,
-            self._flush_memories_for_session,
-            old_session_id,
-            session_key,
+            None, ctx.run, self._flush_memories_for_session,
+            old_session_id, session_key,
         )
 
     @property
@@ -2086,7 +2089,17 @@ class GatewayRunner:
 
                 for key, entry in _expired_entries:
                     try:
-                        await self._async_flush_memories(entry.session_id, key)
+                        # Set per-user ContextVar for the flush so memories
+                        # are written to the correct user's profile directory.
+                        from hermes_constants import set_hermes_home_ctx
+                        _flush_user_id = getattr(entry.origin, "user_id", None) if entry.origin else None
+                        if _flush_user_id:
+                            _flush_base = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+                            set_hermes_home_ctx(str(_flush_base / "user_profiles" / str(_flush_user_id)))
+                        try:
+                            await self._async_flush_memories(entry.session_id, key)
+                        finally:
+                            set_hermes_home_ctx(None)
                         # Shut down memory provider and close tool resources
                         # on the cached agent.  Idle agents live in
                         # _agent_cache (not _running_agents), so look there.
@@ -4339,9 +4352,14 @@ class GatewayRunner:
         try:
             old_entry = self.session_store._entries.get(session_key)
             if old_entry:
+                # Set per-user context before creating the flush task
+                from hermes_constants import set_hermes_home_ctx
+                _reset_base = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+                set_hermes_home_ctx(str(_reset_base / "user_profiles" / str(source.user_id)))
                 _flush_task = asyncio.create_task(
                     self._async_flush_memories(old_entry.session_id, session_key)
                 )
+                set_hermes_home_ctx(None)
                 self._background_tasks.add(_flush_task)
                 _flush_task.add_done_callback(self._background_tasks.discard)
         except Exception as e:
@@ -6418,9 +6436,13 @@ class GatewayRunner:
 
         # Flush memories for current session before switching
         try:
+            from hermes_constants import set_hermes_home_ctx
+            _resume_base = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+            set_hermes_home_ctx(str(_resume_base / "user_profiles" / str(source.user_id)))
             _flush_task = asyncio.create_task(
                 self._async_flush_memories(current_entry.session_id, session_key)
             )
+            set_hermes_home_ctx(None)
             self._background_tasks.add(_flush_task)
             _flush_task.add_done_callback(self._background_tasks.discard)
         except Exception as e:
@@ -8147,9 +8169,34 @@ class GatewayRunner:
                 event_message_id=event_message_id,
             )
 
+        # ---- Per-user isolation: set ContextVar for this user ----
+        from hermes_constants import set_hermes_home_ctx
+        _base_home = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+        _user_profile_dir = _base_home / "user_profiles" / str(source.user_id)
+        # Create profile directory structure on first access
+        if not _user_profile_dir.exists():
+            for _subdir in ("memories", "skills", "sessions", "logs"):
+                (_user_profile_dir / _subdir).mkdir(parents=True, exist_ok=True)
+        # Set task-local HERMES_HOME — propagated to agent thread via
+        # _run_in_executor_with_context(copy_context()).
+        set_hermes_home_ctx(str(_user_profile_dir))
+
+        # Per-user SessionDB — each user gets an isolated state.db.
+        _user_id_str = str(source.user_id)
+        _user_session_db = self._user_session_dbs.get(_user_id_str)
+        if _user_session_db is None:
+            try:
+                from hermes_state import SessionDB
+                _user_session_db = SessionDB(
+                    db_path=_user_profile_dir / "state.db"
+                )
+                self._user_session_dbs[_user_id_str] = _user_session_db
+            except Exception:
+                _user_session_db = self._session_db  # fallback to shared
+
         from run_agent import AIAgent
         import queue
-        
+
         user_config = _load_gateway_config()
         platform_key = _platform_config_key(source.platform)
 
@@ -8650,7 +8697,7 @@ class GatewayRunner:
                     platform=platform_key,
                     user_id=source.user_id,
                     gateway_session_key=session_key,
-                    session_db=self._session_db,
+                    session_db=_user_session_db,
                     fallback_model=self._fallback_model,
                 )
                 if _cache_lock and _cache is not None:
@@ -9505,6 +9552,8 @@ class GatewayRunner:
                     channel_prompt=next_channel_prompt,
                 )
         finally:
+            # Clear per-user HERMES_HOME override
+            set_hermes_home_ctx(None)
             # Stop progress sender, interrupt monitor, and notification task
             if progress_task:
                 progress_task.cancel()
