@@ -1,0 +1,60 @@
+{
+  "version": "0.10.0",
+  "updated": "2026-04-17",
+  "features": [
+    {
+      "id": "feat-001",
+      "name": "Per-User Isolation (ContextVar)",
+      "description": "ContextVar-based HERMES_HOME override for per-user data isolation in Feishu gateway. Each user gets isolated memories, skills, sessions, and state.db.",
+      "dependencies": [],
+      "status": "done",
+      "evidence": "All 12 files pass syntax check. Import tests pass. ContextVar isolation verified with concurrent asyncio tasks. Dynamic path resolution confirmed for skills_tool, skill_manager_tool, skills_hub, skills_sync, hermes_state, memory_tool.",
+      "files_changed": [
+        "hermes_constants.py",
+        "gateway/run.py",
+        "tools/skills_tool.py",
+        "tools/skill_manager_tool.py",
+        "tools/skills_hub.py",
+        "tools/skills_sync.py",
+        "hermes_state.py",
+        "run_agent.py",
+        "agent/skill_commands.py",
+        "tools/session_search_tool.py",
+        "hermes_cli/commands.py",
+        "hermes_cli/skills_hub.py"
+      ]
+    },
+    {
+      "id": "feat-002",
+      "name": "Harness Infrastructure",
+      "description": "CLAUDE.md, feature_list.json, progress.md, init.sh for structured multi-session development.",
+      "dependencies": [],
+      "status": "done",
+      "evidence": "All harness files created and verified.",
+      "files_changed": [
+        "CLAUDE.md",
+        "feature_list.json",
+        "progress.md",
+        "init.sh"
+      ]
+    },
+    {
+      "id": "feat-003",
+      "name": "Per-User Isolation Tests",
+      "description": "Add pytest tests for ContextVar isolation, concurrent asyncio tasks, memory/skills path resolution, and SessionDB isolation.",
+      "dependencies": ["feat-001"],
+      "status": "pending",
+      "evidence": "",
+      "files_changed": []
+    },
+    {
+      "id": "feat-004",
+      "name": "Integration Testing with Feishu Gateway",
+      "description": "End-to-end test: two Feishu users send messages simultaneously, verify memories/skills/sessions are fully isolated.",
+      "dependencies": ["feat-001", "feat-003"],
+      "status": "pending",
+      "evidence": "",
+      "files_changed": []
+    }
+  ]
+}
