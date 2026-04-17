@@ -25,6 +25,36 @@
 - Should per-user `state.db` connections be cleaned up on session expiry?
 
 ### Next Steps
-- feat-003: Write pytest tests for ContextVar isolation
-- feat-004: Integration test with Feishu gateway
-- Update AGENTS.md to document the new module-level cache prohibition for Gateway modules
+- Update AGENTS.md to document the new module-level cache prohibition for Gateway modules (done)
+- Real-world testing with live Feishu gateway deployment
+- Consider adding per-user `config.yaml` copy on profile creation
+
+---
+
+## Session: 2026-04-17 (Tests for Per-User Isolation)
+
+### Completed
+- **feat-003**: 23 unit tests in `tests/test_per_user_isolation.py`
+  - ContextVar lifecycle (set/get/clear/Path-object/None)
+  - Dynamic path resolution (skills_dir, config_path, env_path, memory_dir, skills_hub, state.db)
+  - Async task isolation (2 tasks, parent leak check, 10 concurrent tasks)
+  - Thread propagation (copy_context vs plain thread)
+  - SessionDB isolation (per-user path, two separate DBs, ContextVar-aware default)
+  - Profile directory structure and memory writes
+  - CLI/Cron fallback behavior
+  - Updated `tests/conftest.py` to clear ContextVar in `_isolate_hermes_home` fixture
+
+- **feat-004**: 10 integration tests in `tests/gateway/test_per_user_gateway_isolation.py`
+  - Profile directory creation with subdirs
+  - Two users get separate dirs
+  - ContextVar set/clear lifecycle
+  - Concurrent users isolated (async gather)
+  - User A cannot see User B's memory
+  - Per-user SessionDB cache
+  - Session data isolation (get_session cross-check)
+  - copy_context thread propagation
+  - asyncio.create_task inherits context
+  - Shared infrastructure (.env) unaffected
+
+### Test Results
+- 32 passed, 1 skipped (httpx not in system Python), 0 failed

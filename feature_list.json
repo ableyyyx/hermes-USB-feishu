@@ -43,18 +43,23 @@
       "name": "Per-User Isolation Tests",
       "description": "Add pytest tests for ContextVar isolation, concurrent asyncio tasks, memory/skills path resolution, and SessionDB isolation.",
       "dependencies": ["feat-001"],
-      "status": "pending",
-      "evidence": "",
-      "files_changed": []
+      "status": "done",
+      "evidence": "23 unit tests (22 passed, 1 skipped due to missing httpx in system Python). Covers: ContextVar lifecycle, dynamic path resolution, async task isolation, thread propagation via copy_context(), SessionDB isolation, profile directory creation, CLI fallback behavior.",
+      "files_changed": [
+        "tests/test_per_user_isolation.py",
+        "tests/conftest.py"
+      ]
     },
     {
       "id": "feat-004",
       "name": "Integration Testing with Feishu Gateway",
       "description": "End-to-end test: two Feishu users send messages simultaneously, verify memories/skills/sessions are fully isolated.",
       "dependencies": ["feat-001", "feat-003"],
-      "status": "pending",
-      "evidence": "",
-      "files_changed": []
+      "status": "done",
+      "evidence": "10 integration tests all passed. Covers: profile dir creation, ContextVar injection/cleanup, concurrent user isolation, memory invisibility between users, per-user SessionDB cache, session data isolation, background context propagation, shared infrastructure unaffected.",
+      "files_changed": [
+        "tests/gateway/test_per_user_gateway_isolation.py"
+      ]
     }
   ]
 }

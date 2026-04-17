@@ -26,6 +26,10 @@ def _isolate_hermes_home(tmp_path, monkeypatch):
     (fake_home / "memories").mkdir()
     (fake_home / "skills").mkdir()
     monkeypatch.setenv("HERMES_HOME", str(fake_home))
+    # Clear any ContextVar override from a previous test so tests always
+    # start with the env-var-based HERMES_HOME.
+    from hermes_constants import set_hermes_home_ctx
+    set_hermes_home_ctx(None)
     # Reset plugin singleton so tests don't leak plugins from ~/.hermes/plugins/
     try:
         import hermes_cli.plugins as _plugins_mod
