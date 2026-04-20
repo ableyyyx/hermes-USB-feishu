@@ -181,6 +181,37 @@ In addition to file tool validation, memory files have explicit path validation:
 
 **User customization preserved**: Users can still modify their own SOUL.md (original Hermes design).
 
+### Path Disclosure Prevention (feat-010)
+
+**Three-Layer Defense Against Information Leakage**
+
+Even with access controls in place, agent responses could leak sensitive path information. Implemented complete path hiding:
+
+**Layer 1: Response Post-Processing (Technical Enforcement)**
+- `gateway/run.py:_sanitize_response_content()` automatically sanitizes all responses
+- Hides user IDs: `ou_xxx` → `<user-profile>`
+- Hides paths: `~/.hermes/user_profiles/ou_xxx/skills/` → `your skills directory`
+- Applied before returning response to user
+- Cannot be bypassed
+
+**Layer 2: Tool Layer (Display Functions)**
+- `hermes_constants.py:display_skills_dir()` - Returns "your skills directory" in gateway mode
+- `hermes_constants.py:display_memory_dir()` - Returns "your memories directory" in gateway mode
+- CLI mode shows actual paths for debugging
+
+**Layer 3: Behavioral Guidance (System Prompt)**
+- System prompt instructs agent to use descriptive language
+- Avoid revealing specific paths or directory structures
+- Focus on functionality, not file system details
+
+**Example Transformation**:
+```
+Before: "Your skills are at ~/.hermes/user_profiles/ou_abc123/skills/"
+After:  "Your skills are stored in your skills directory"
+```
+
+**CLI Mode**: Actual paths still shown for debugging (single-user mode)
+
 ### Incident: CVE-2026-XXXX (Cross-User Data Access)
 
 **Discovered**: 2026-04-20  

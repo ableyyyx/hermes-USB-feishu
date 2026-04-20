@@ -156,6 +156,62 @@ def display_hermes_home() -> str:
         return display_path
 
 
+def _is_gateway_mode() -> bool:
+    """Return True if running in multi-user gateway mode.
+
+    Gateway mode requires path hiding to prevent information disclosure.
+    Single-user CLI mode shows actual paths for debugging.
+    """
+    ctx_value = _HERMES_HOME_CTX.get(None)
+    if ctx_value is not None:
+        return True
+    return bool(os.getenv("HERMES_GATEWAY_SESSION"))
+
+
+def display_skills_dir() -> str:
+    """Return a user-friendly display string for the skills directory.
+
+    In gateway mode, returns generic description to prevent path disclosure.
+    In CLI mode, returns actual path for debugging.
+
+    Examples:
+        Gateway mode: "your skills directory"
+        CLI mode: "~/.hermes/skills"
+    """
+    if _is_gateway_mode():
+        return "your skills directory"
+    else:
+        # CLI mode: show actual path for debugging
+        skills_dir = get_skills_dir()
+        try:
+            rel_path = skills_dir.relative_to(Path.home())
+            return "~/" + str(rel_path)
+        except ValueError:
+            return str(skills_dir)
+
+
+def display_memory_dir() -> str:
+    """Return a user-friendly display string for the memories directory.
+
+    In gateway mode, returns generic description to prevent path disclosure.
+    In CLI mode, returns actual path for debugging.
+
+    Examples:
+        Gateway mode: "your memories directory"
+        CLI mode: "~/.hermes/memories"
+    """
+    if _is_gateway_mode():
+        return "your memories directory"
+    else:
+        # CLI mode: show actual path for debugging
+        memory_dir = get_hermes_home() / "memories"
+        try:
+            rel_path = memory_dir.relative_to(Path.home())
+            return "~/" + str(rel_path)
+        except ValueError:
+            return str(memory_dir)
+
+
 def get_subprocess_home() -> str | None:
     """Return a per-profile HOME directory for subprocesses, or None.
 

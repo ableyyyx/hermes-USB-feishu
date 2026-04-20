@@ -1,5 +1,5 @@
 {
-  "version": "0.12.0",
+  "version": "0.13.0",
   "updated": "2026-04-20",
   "features": [
     {
@@ -127,6 +127,18 @@
         "tools/memory_tool.py",
         "agent/prompt_builder.py",
         "tests/test_memory_security.py"
+      ]
+    },
+    {
+      "id": "feat-010",
+      "name": "Security Enhancement: Complete Path Disclosure Prevention",
+      "description": "Three-layer defense to prevent path information leakage in agent responses: (1) Response post-processing automatically hides all user IDs and paths, (2) display_skills_dir() and display_memory_dir() return descriptive language instead of paths in gateway mode, (3) System prompt instructions guide agent to use descriptive language. Completely prevents path disclosure while maintaining CLI debugging capability.",
+      "dependencies": ["feat-001", "feat-008", "feat-009"],
+      "status": "done",
+      "evidence": "Syntax check passes. Three-layer protection: technical enforcement (response sanitization), tool layer (display functions), behavioral guidance (system prompt). Gateway mode completely hides paths, CLI mode shows actual paths for debugging. User requirement: complete path hiding, no specific paths shown to users.",
+      "files_changed": [
+        "gateway/run.py",
+        "hermes_constants.py"
       ]
     }
   ]

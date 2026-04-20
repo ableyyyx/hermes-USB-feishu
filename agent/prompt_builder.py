@@ -266,6 +266,33 @@ TOOL_USE_ENFORCEMENT_GUIDANCE = (
     "without acting are not acceptable."
 )
 
+# Path disclosure prevention guidance (feat-010)
+# Critical security requirement for multi-user gateway deployments.
+PATH_DISCLOSURE_PREVENTION_GUIDANCE = (
+    "# Path Disclosure Prevention (CRITICAL)\n"
+    "\n"
+    "When users ask about file locations, directory paths, or where data is stored:\n"
+    "\n"
+    "**DO:**\n"
+    "- Use descriptive language: 'your skills directory', 'your profile directory', 'your memories'\n"
+    "- Explain what the directory contains, not where it is\n"
+    "- Focus on functionality, not file system structure\n"
+    "\n"
+    "**DO NOT:**\n"
+    "- Reveal specific paths (e.g., ~/.hermes/user_profiles/ou_xxx/skills/)\n"
+    "- Show user IDs (ou_xxx) or directory structures\n"
+    "- Provide commands that would expose paths (e.g., 'cd ~/.hermes/...')\n"
+    "- Include paths in error messages or debugging information\n"
+    "\n"
+    "**Examples:**\n"
+    "- ❌ BAD: 'Your skills are at ~/.hermes/user_profiles/ou_abc123/skills/'\n"
+    "- ✅ GOOD: 'Your skills are stored in a dedicated directory managed by the system'\n"
+    "- ❌ BAD: 'Run: ls ~/.hermes/user_profiles/ou_abc123/skills/'\n"
+    "- ✅ GOOD: 'I can list your skills for you using the skills_list tool'\n"
+    "\n"
+    "This is a security requirement to prevent information disclosure in multi-user environments."
+)
+
 # Model name substrings that trigger tool-use enforcement guidance.
 # Add new patterns here when a model family needs explicit steering.
 TOOL_USE_ENFORCEMENT_MODELS = ("gpt", "codex", "gemini", "gemma", "grok")

@@ -325,6 +325,90 @@ def _expand_whatsapp_auth_aliases(identifier: str) -> set:
 
 logger = logging.getLogger(__name__)
 
+
+# ── Response Sanitization (Path Disclosure Prevention) ────────────────
+
+def _sanitize_response_content(content: str) -> str:
+    """Sanitize response content to completely hide paths and user IDs.
+
+    Applied to all agent responses before returning to user in gateway mode.
+    Implements complete path hiding per security requirements (feat-010).
+
+    This is a defense-in-depth measure that works alongside:
+    - display_skills_dir() / display_memory_dir() (tool layer)
+    - System prompt instructions (behavioral layer)
+
+    Args:
+        content: Raw agent response content
+
+    Returns:
+        Sanitized content with paths replaced by descriptive language
+    """
+    import re
+
+    # 1. Hide user IDs (ou_xxx)
+    content = re.sub(
+        r'\bou_[a-zA-Z0-9]+\b',
+        '<user-profile>',
+        content
+    )
+
+    # 2. Hide full paths with user_profiles
+    content = re.sub(
+        r'(/[^\s]*)?/user_profiles/ou_[a-zA-Z0-9]+/[^\s]*',
+        'your profile directory',
+        content
+    )
+
+    # 3. Hide ~/.hermes paths with specific subdirectories
+    content = re.sub(
+        r'~/\.hermes/user_profiles/[^\s/]+/skills/?',
+        'your skills directory',
+        content
+    )
+    content = re.sub(
+        r'~/\.hermes/user_profiles/[^\s/]+/memories/?',
+        'your memories directory',
+        content
+    )
+    content = re.sub(
+        r'~/\.hermes/user_profiles/[^\s/]+/?',
+        'your profile directory',
+        content
+    )
+
+    # 4. Hide absolute paths
+    content = re.sub(
+        r'/home/[^/]+/\.hermes/user_profiles/[^\s/]+/skills/?',
+        'your skills directory',
+        content
+    )
+    content = re.sub(
+        r'/home/[^/]+/\.hermes/user_profiles/[^\s/]+/memories/?',
+        'your memories directory',
+        content
+    )
+    content = re.sub(
+        r'/home/[^/]+/\.hermes/user_profiles/[^\s/]+/?',
+        'your profile directory',
+        content
+    )
+
+    # 5. Hide generic ~/.hermes references
+    content = re.sub(
+        r'~/\.hermes/skills/?',
+        'your skills directory',
+        content
+    )
+    content = re.sub(
+        r'~/\.hermes/memories/?',
+        'your memories directory',
+        content
+    )
+
+    return content
+
+
 # Sentinel placed into _running_agents immediately when a session starts
 # processing, *before* any await.  Prevents a second message for the same
 # session from bypassing the "already running" guard during the async gap
@@ -3945,6 +4029,9 @@ class GatewayRunner:
                 pass
 
             response = agent_result.get("final_response") or ""
+
+            # ── Sanitize response to prevent path disclosure ──────────────
+            response = _sanitize_response_content(response)
 
             # Convert the agent's internal "(empty)" sentinel into a
             # user-friendly message.  "(empty)" means the model failed to
