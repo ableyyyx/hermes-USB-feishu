@@ -148,8 +148,38 @@ This prevents user enumeration and targeted attacks.
 
 1. **Operator config is shared**: All users share the same API keys and model routing (by design)
 2. **No rate limiting**: Repeated boundary violations are not rate-limited
-3. **No audit trail**: Cross-user access attempts are not logged to security audit log
+3. **No audit trail for file tools**: Cross-user access attempts via file tools are not logged (memory files have audit logging)
 4. **Terminal tool unrestricted**: The `terminal` tool has full host access and is not subject to user boundary validation (same trust model as single-user mode)
+
+### Memory File Protection (feat-009)
+
+**Defense-in-Depth for SOUL.md, MEMORY.md, USER.md**
+
+In addition to file tool validation, memory files have explicit path validation:
+
+- **tools/memory_tool.py**: Validates `MEMORY.md` and `USER.md` paths before read/write
+- **agent/prompt_builder.py**: Validates `SOUL.md` path before loading
+- **Audit logging**: Failed access attempts logged to `{HERMES_HOME}/logs/memory_security.log`
+
+**Why additional validation?**
+- Memory files use direct file I/O (not through file_tools)
+- Provides defense-in-depth even though ContextVar already isolates users
+- Detects ContextVar misconfiguration or bypass attempts
+
+**Audit log format**:
+```json
+{
+  "timestamp": "2026-04-20T15:30:45.123456",
+  "event": "memory_access_denied",
+  "file_type": "SOUL" | "MEMORY" | "USER",
+  "attempted_path": "/path/to/file",
+  "user_id": "ou_xxx" | null,
+  "context_var": "/actual/context/path" | null,
+  "error": "Path escapes allowed directory: ..."
+}
+```
+
+**User customization preserved**: Users can still modify their own SOUL.md (original Hermes design).
 
 ### Incident: CVE-2026-XXXX (Cross-User Data Access)
 

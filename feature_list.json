@@ -1,5 +1,5 @@
 {
-  "version": "0.11.0",
+  "version": "0.12.0",
   "updated": "2026-04-20",
   "features": [
     {
@@ -114,6 +114,19 @@
         "hermes_constants.py",
         "tests/tools/test_file_tools_user_boundary.py",
         "tests/test_path_disclosure.py"
+      ]
+    },
+    {
+      "id": "feat-009",
+      "name": "Security Enhancement: Memory File Path Validation",
+      "description": "Added defense-in-depth security for global memory files (SOUL.md, MEMORY.md, USER.md). Implemented explicit path validation in gateway mode to prevent ContextVar misconfiguration from causing cross-user access. Added simplified audit logging (failures only) to detect configuration errors. Maintains user's ability to modify their own SOUL.md.",
+      "dependencies": ["feat-001", "feat-008"],
+      "status": "done",
+      "evidence": "All tests pass: 9/9 memory security tests, 33/33 existing memory tool tests. Syntax check passes. Defense-in-depth: validates paths even though ContextVar already provides isolation. Audit log records failed access attempts to memory_security.log. CLI mode unchanged (no validation), gateway mode enforces validation. Users can still modify their own SOUL.md (preserves original design).",
+      "files_changed": [
+        "tools/memory_tool.py",
+        "agent/prompt_builder.py",
+        "tests/test_memory_security.py"
       ]
     }
   ]

@@ -29,6 +29,7 @@ import os
 import re
 import tempfile
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from hermes_constants import get_hermes_home
 from typing import Dict, Any, List, Optional
@@ -46,6 +47,14 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+
+# ── Security Exception ────────────────────────────────────────────────
+
+class SecurityError(Exception):
+    """Raised when a security boundary is violated."""
+    pass
+
+
 # Where memory files live — resolved dynamically so profile overrides
 # (HERMES_HOME env var changes) are always respected.  The old module-level
 # constant was cached at import time and could go stale if a profile switch
@@ -55,6 +64,88 @@ def get_memory_dir() -> Path:
     return get_hermes_home() / "memories"
 
 ENTRY_DELIMITER = "\n§\n"
+
+
+# ── Memory Security Functions ─────────────────────────────────────────
+
+def _is_gateway_mode() -> bool:
+    """Return True if running in multi-user gateway mode.
+
+    Gateway mode requires strict user boundary validation to prevent
+    cross-user access. Single-user CLI mode allows unrestricted access.
+    """
+    from hermes_constants import _HERMES_HOME_CTX
+    ctx_value = _HERMES_HOME_CTX.get(None)
+    if ctx_value is not None:
+        return True
+    return bool(os.getenv("HERMES_GATEWAY_SESSION"))
+
+
+def _extract_user_id_from_path(path_str: str) -> Optional[str]:
+    """Extract user ID from path like /user_profiles/ou_xxx/."""
+    import re
+    match = re.search(r'/user_profiles/(ou_[a-zA-Z0-9]+)/', path_str)
+    return match.group(1) if match else None
+
+
+def _log_memory_access_failure(
+    file_type: str,
+    attempted_path: str,
+    error: str
+) -> None:
+    """Log failed memory access attempt to security audit log (simplified version).
+
+    Only logs failures to reduce log volume and focus on security events.
+    """
+    from hermes_constants import _HERMES_HOME_CTX
+
+    try:
+        log_dir = get_hermes_home() / "logs"
+        log_dir.mkdir(exist_ok=True)
+        log_file = log_dir / "memory_security.log"
+
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "event": "memory_access_denied",
+            "file_type": file_type,
+            "attempted_path": attempted_path,
+            "user_id": _extract_user_id_from_path(attempted_path),
+            "context_var": _HERMES_HOME_CTX.get(None),
+            "error": error,
+        }
+
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as e:
+        logger.error(f"Failed to write memory security log: {e}")
+
+
+def _validate_memory_path(file_path: Path, file_type: str) -> None:
+    """Validate that memory file is within current user's profile.
+
+    Only validates in gateway mode. CLI mode has unrestricted access.
+
+    Args:
+        file_path: Path to memory file
+        file_type: "MEMORY" | "USER" for logging
+
+    Raises:
+        SecurityError: If path is outside user's profile in gateway mode
+    """
+    if not _is_gateway_mode():
+        return  # CLI mode: no validation
+
+    from tools.path_security import validate_within_dir
+    user_home = get_hermes_home()
+
+    error = validate_within_dir(file_path, user_home)
+    if error:
+        # Log to audit log (simplified version - only failures)
+        _log_memory_access_failure(file_type, str(file_path), error)
+        raise SecurityError(
+            f"Memory file access denied: {file_type} at '{file_path}' "
+            f"is outside your profile directory."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -126,8 +217,14 @@ class MemoryStore:
         mem_dir = get_memory_dir()
         mem_dir.mkdir(parents=True, exist_ok=True)
 
-        self.memory_entries = self._read_file(mem_dir / "MEMORY.md")
-        self.user_entries = self._read_file(mem_dir / "USER.md")
+        # ── User boundary validation (gateway mode only) ──────────────
+        memory_path = mem_dir / "MEMORY.md"
+        user_path = mem_dir / "USER.md"
+        _validate_memory_path(memory_path, "MEMORY")
+        _validate_memory_path(user_path, "USER")
+
+        self.memory_entries = self._read_file(memory_path)
+        self.user_entries = self._read_file(user_path)
 
         # Deduplicate entries (preserves order, keeps first occurrence)
         self.memory_entries = list(dict.fromkeys(self.memory_entries))
@@ -195,7 +292,13 @@ class MemoryStore:
     def save_to_disk(self, target: str):
         """Persist entries to the appropriate file. Called after every mutation."""
         get_memory_dir().mkdir(parents=True, exist_ok=True)
-        self._write_file(self._path_for(target), self._entries_for(target))
+
+        # ── User boundary validation (gateway mode only) ──────────────
+        file_path = self._path_for(target)
+        file_type = "USER" if target == "user" else "MEMORY"
+        _validate_memory_path(file_path, file_type)
+
+        self._write_file(file_path, self._entries_for(target))
 
     def _entries_for(self, target: str) -> List[str]:
         if target == "user":

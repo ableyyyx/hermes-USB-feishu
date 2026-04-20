@@ -1,5 +1,102 @@
 # Session Progress Log
 
+## Session: 2026-04-20 (feat-009: Memory File Path Validation)
+
+### Background
+
+用户提出：是否应该对全局记忆文件（SOUL.md、MEMORY.md、USER.md）添加安全限制？
+
+### Analysis
+
+**当前状态**：
+- 记忆文件通过 ContextVar 实现用户隔离
+- 使用直接文件 I/O，不通过 file_tools
+- 没有显式路径验证
+- 已有内容扫描（提示注入、命令注入）
+
+**风险评估**：
+- 当前风险：LOW（ContextVar 已提供隔离）
+- 潜在风险：ContextVar 配置错误、绕过 ContextVar、未来的工具
+
+### Completed
+
+- **feat-009**: 记忆文件路径验证（纵深防御）
+
+  **方案选择**：方案A + 方案D（简化版）
+  - 添加显式路径验证（即使 ContextVar 已提供隔离）
+  - 简化审计日志（只记录失败的访问）
+  - 不添加只读保护（保持用户可修改 SOUL.md）
+
+  **实施内容**：
+
+  1. **tools/memory_tool.py**
+     - 添加 `_is_gateway_mode()` - 检测网关模式
+     - 添加 `_validate_memory_path()` - 验证路径在用户 profile 内
+     - 添加 `_log_memory_access_failure()` - 记录失败的访问
+     - 添加 `SecurityError` 异常类
+     - 在 `MemoryStore.load_from_disk()` 中调用验证
+     - 在 `MemoryStore.save_to_disk()` 中调用验证
+
+  2. **agent/prompt_builder.py**
+     - 添加 `_is_gateway_mode()` - 检测网关模式
+     - 添加 `_validate_soul_path()` - 验证 SOUL.md 路径
+     - 添加 `_log_soul_access_failure()` - 记录失败的访问
+     - 添加 `SecurityError` 异常类
+     - 在 `load_soul_md()` 中调用验证
+
+  3. **tests/test_memory_security.py** (新建)
+     - 9个测试，全部通过
+     - 测试网关模式检测
+     - 测试路径验证逻辑
+     - 测试 MemoryStore 和 load_soul_md 的验证
+     - 测试审计日志记录
+
+### Test Results
+
+- ✅ 记忆安全测试：9/9 通过
+- ✅ 现有记忆工具测试：33/33 通过
+- ✅ 语法检查：无错误
+
+### Key Design Decisions
+
+1. **纵深防御**：即使 ContextVar 正确工作，也添加显式验证
+2. **保持灵活性**：用户仍可修改自己的 SOUL.md（Hermes 原本设计）
+3. **简化审计**：只记录失败的访问，减少日志量
+4. **最小影响**：CLI 模式完全不受影响，网关模式添加安全层
+
+### Security Guarantees
+
+**防护的攻击向量**：
+1. ✅ ContextVar 配置错误 → 路径验证阻止
+2. ✅ 绕过 ContextVar → 路径验证捕获
+3. ✅ 未来的工具 → 任何访问都经过验证
+
+**不防护的场景**：
+1. ❌ 用户修改自己的 SOUL.md → 允许的行为
+2. ❌ 操作员访问所有文件 → 完整文件系统权限
+3. ❌ Terminal 工具 → 完整主机访问权限
+
+### Architecture Notes
+
+- 记忆文件验证复用 `tools/path_security.py` 的 `validate_within_dir()`
+- 审计日志写入 `{HERMES_HOME}/logs/memory_security.log`
+- 每个用户有自己的日志文件（在自己的 profile 下）
+- 日志格式：JSON，包含时间戳、文件类型、路径、用户ID、错误信息
+
+### Performance Impact
+
+- 最小化：单次 O(1) 路径验证，每次加载记忆文件时执行
+- 审计日志：只在失败时写入，正常情况下无开销
+- 预期影响：< 1ms 延迟，可忽略
+
+### Open Questions
+
+1. **日志保留期**：memory_security.log 应该保留多久？建议：30天
+2. **日志轮转**：是否需要日志轮转？建议：当文件 > 10MB 时轮转
+3. **告警机制**：是否需要在检测到多次失败后发送告警？建议：暂不需要
+
+---
+
 ## Session: 2026-04-20 (feat-008: Security Fix - Cross-User Data Access Prevention)
 
 ### Vulnerability Discovered

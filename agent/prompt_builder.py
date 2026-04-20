@@ -28,6 +28,87 @@ from utils import atomic_json_write
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# SOUL.md Security Functions
+# ---------------------------------------------------------------------------
+
+class SecurityError(Exception):
+    """Raised when a security boundary is violated."""
+    pass
+
+
+def _is_gateway_mode() -> bool:
+    """Return True if running in multi-user gateway mode.
+
+    Gateway mode requires strict user boundary validation to prevent
+    cross-user access. Single-user CLI mode allows unrestricted access.
+    """
+    from hermes_constants import _HERMES_HOME_CTX
+    ctx_value = _HERMES_HOME_CTX.get(None)
+    if ctx_value is not None:
+        return True
+    return bool(os.getenv("HERMES_GATEWAY_SESSION"))
+
+
+def _extract_user_id_from_path(path_str: str) -> Optional[str]:
+    """Extract user ID from path like /user_profiles/ou_xxx/."""
+    match = re.search(r'/user_profiles/(ou_[a-zA-Z0-9]+)/', path_str)
+    return match.group(1) if match else None
+
+
+def _log_soul_access_failure(attempted_path: str, error: str) -> None:
+    """Log failed SOUL.md access attempt to security audit log."""
+    from hermes_constants import _HERMES_HOME_CTX
+    from datetime import datetime
+
+    try:
+        log_dir = get_hermes_home() / "logs"
+        log_dir.mkdir(exist_ok=True)
+        log_file = log_dir / "memory_security.log"
+
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "event": "memory_access_denied",
+            "file_type": "SOUL",
+            "attempted_path": attempted_path,
+            "user_id": _extract_user_id_from_path(attempted_path),
+            "context_var": _HERMES_HOME_CTX.get(None),
+            "error": error,
+        }
+
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as e:
+        logger.error(f"Failed to write memory security log: {e}")
+
+
+def _validate_soul_path(file_path: Path) -> None:
+    """Validate that SOUL.md is within current user's profile.
+
+    Only validates in gateway mode. CLI mode has unrestricted access.
+
+    Args:
+        file_path: Path to SOUL.md
+
+    Raises:
+        SecurityError: If path is outside user's profile in gateway mode
+    """
+    if not _is_gateway_mode():
+        return  # CLI mode: no validation
+
+    from tools.path_security import validate_within_dir
+    user_home = get_hermes_home()
+
+    error = validate_within_dir(file_path, user_home)
+    if error:
+        # Log to audit log (simplified version - only failures)
+        _log_soul_access_failure(str(file_path), error)
+        raise SecurityError(
+            f"SOUL.md access denied: '{file_path}' is outside your profile directory."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Context file scanning — detect prompt injection in AGENTS.md, .cursorrules,
 # SOUL.md before they get injected into the system prompt.
@@ -904,6 +985,14 @@ def load_soul_md() -> Optional[str]:
         logger.debug("Could not ensure HERMES_HOME before loading SOUL.md: %s", e)
 
     soul_path = get_hermes_home() / "SOUL.md"
+
+    # ── User boundary validation (gateway mode only) ──────────────
+    try:
+        _validate_soul_path(soul_path)
+    except SecurityError as e:
+        logger.error(f"SOUL.md access denied: {e}")
+        return None
+
     if not soul_path.exists():
         return None
     try:
