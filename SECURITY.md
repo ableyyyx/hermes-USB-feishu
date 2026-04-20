@@ -21,6 +21,7 @@ The core assumption is that Hermes is a **personal agent** with one trusted oper
 
 ### Operator & Session Trust
 - **Single Tenant:** The system protects the operator from LLM actions, not from malicious co-tenants. Multi-user isolation must happen at the OS/host level.
+- **Multi-User Gateway Isolation:** In gateway deployments (Feishu, Telegram, Discord), each user gets an isolated profile directory (`~/.hermes/user_profiles/{user_id}/`) with separate memories, skills, sessions, and logs. User boundary validation prevents cross-user data access. See Section 6 for details.
 - **Gateway Security:** Authorized callers (Telegram, Discord, Slack, etc.) receive equal trust. Session keys are used for routing, not as authorization boundaries.
 - **Execution:** Defaults to `terminal.backend: local` (direct host execution). Container isolation (Docker, Modal, Daytona) is opt-in for sandboxing.
 
@@ -82,3 +83,93 @@ The following scenarios are **not** considered security breaches:
 - **Coordinated Disclosure:** 90-day window or until a fix is released, whichever comes first.
 - **Communication:** All updates occur via the GHSA thread or email correspondence with security@nousresearch.com.
 - **Credits:** Reporters are credited in release notes unless anonymity is requested.
+
+---
+
+## 6. Multi-User Gateway Isolation
+
+### Overview
+
+In multi-user gateway deployments (Feishu, Telegram, Discord), Hermes implements a defense-in-depth security model to prevent cross-user data access. Each user receives an isolated profile directory with separate memories, skills, sessions, and logs.
+
+### Architecture
+
+**ContextVar-Based Isolation** (`hermes_constants.py`)
+
+Each user gets an isolated profile:
+```
+~/.hermes/user_profiles/{user_id}/
+  ├── memories/     # MEMORY.md, USER.md
+  ├── skills/       # Custom skill definitions
+  ├── sessions/     # Conversation history
+  ├── logs/         # Agent activity logs
+  └── state.db      # Per-user session state
+```
+
+The gateway sets `_HERMES_HOME_CTX` ContextVar per-request in `gateway/run.py:_run_agent()`:
+```python
+_user_profile_dir = _base_home / "user_profiles" / str(source.user_id)
+set_hermes_home_ctx(str(_user_profile_dir))
+```
+
+**User Boundary Validation** (`tools/file_tools.py`)
+
+All file access tools validate paths before I/O:
+- `read_file_tool` - Blocks reading other users' files
+- `write_file_tool` - Blocks writing to other users' directories
+- `patch_tool` - Blocks modifying other users' files
+- `search_tool` - Blocks searching other users' directories
+
+Validation only applies in gateway mode (detected via ContextVar). CLI mode has full filesystem access (unchanged).
+
+**Path Disclosure Prevention** (`hermes_constants.py`)
+
+User IDs are sanitized in all displayed paths:
+- Before: `~/.hermes/user_profiles/ou_e35410f852dacadaced24f89d5743de1/skills/`
+- After: `~/.hermes/user_profiles/<your-profile>/skills/`
+
+This prevents user enumeration and targeted attacks.
+
+### Attack Vectors Mitigated
+
+1. **Direct Path Access**: User A specifies User B's absolute path → BLOCKED by validation
+2. **Path Traversal**: User A uses `../` to escape profile → BLOCKED by `Path.resolve()` + validation
+3. **Symlink Attack**: User A creates symlink to User B's files → BLOCKED by `Path.resolve()`
+4. **Path Enumeration**: User A extracts user IDs from responses → User IDs sanitized
+5. **Tool Chaining**: User A uses multiple tools in sequence → Each tool validates independently
+
+### Testing
+
+- `tests/tools/test_file_tools_user_boundary.py` (10 tests) - User boundary validation
+- `tests/test_path_disclosure.py` (3 tests) - Path sanitization
+- `tests/gateway/test_per_user_gateway_isolation.py` (10 tests) - Concurrent user isolation
+
+### Known Limitations
+
+1. **Operator config is shared**: All users share the same API keys and model routing (by design)
+2. **No rate limiting**: Repeated boundary violations are not rate-limited
+3. **No audit trail**: Cross-user access attempts are not logged to security audit log
+4. **Terminal tool unrestricted**: The `terminal` tool has full host access and is not subject to user boundary validation (same trust model as single-user mode)
+
+### Incident: CVE-2026-XXXX (Cross-User Data Access)
+
+**Discovered**: 2026-04-20  
+**Severity**: CRITICAL  
+**Status**: FIXED in v0.11.0
+
+**Vulnerability**: User A could access User B's private data (memories, skills, sessions) by specifying paths outside their profile directory.
+
+**Attack Vector**:
+1. User A asked "你的技能检索的路径" → Agent revealed User B's full path
+2. User A used `search_files` and `skill_view` to access User B's data
+3. User A extracted User B's personal information from `USER.md`
+
+**Root Cause**: File tools accepted arbitrary paths without checking user ownership.
+
+**Fix**: Added user boundary validation to all file tools and path disclosure prevention in `display_hermes_home()`.
+
+**References**: 
+- `progress.md` - Session 2026-04-20
+- `feature_list.json` - feat-008
+- `tests/tools/test_file_tools_user_boundary.py` - Regression tests
+

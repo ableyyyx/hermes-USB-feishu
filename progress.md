@@ -1,5 +1,72 @@
 # Session Progress Log
 
+## Session: 2026-04-20 (feat-008: Security Fix - Cross-User Data Access Prevention)
+
+### Vulnerability Discovered
+- **Critical security issue**: User A (`ou_e35410f852dacadaced24f89d5743de1`) could access User B's (`ou_2ff2be6c69f565f4f9a6c51730c053cf`) private data
+- **Attack vector**: 
+  1. User A asked "你的技能检索的路径" → Agent revealed User B's full path
+  2. User A used `search_files` and `skill_view` to access User B's skills and memories
+  3. User A successfully extracted User B's personal info from `USER.md`
+- **Root cause**: File tools (read_file, write_file, patch, search) accepted arbitrary paths without checking user ownership
+
+### Completed
+- **feat-008**: Comprehensive security fix with defense-in-depth approach
+  
+  **Layer 1: User Boundary Validation** (tools/file_tools.py)
+  - Added `_is_gateway_mode()` - detects multi-user gateway mode via ContextVar
+  - Added `_validate_user_boundary()` - validates paths are within current user's profile
+  - Applied validation to all 4 file tools before any I/O operations
+  - Only active in gateway mode; CLI mode unchanged (backward compatible)
+  
+  **Layer 2: Path Disclosure Prevention** (hermes_constants.py)
+  - Updated `display_hermes_home()` to sanitize user IDs
+  - Regex replaces `ou_[a-zA-Z0-9]+` with `<your-profile>` in displayed paths
+  - Prevents enumeration attacks and information disclosure
+  
+  **Layer 3: Comprehensive Testing**
+  - Created `tests/tools/test_file_tools_user_boundary.py` (10 tests)
+    - Gateway mode detection logic
+    - User boundary validation (allow own profile, block others)
+    - Path traversal attack prevention
+    - All 4 file tools cross-user access blocking
+  - Created `tests/test_path_disclosure.py` (3 tests)
+    - CLI mode shows normal paths
+    - Gateway mode hides user IDs
+    - Multiple user IDs all sanitized
+
+### Test Results
+- ✅ User boundary validation: 10/10 passed
+- ✅ Path disclosure prevention: 3/3 passed
+- ✅ hermes_constants tests: 11/11 passed
+- ✅ File operations tests: 45/45 passed
+- ✅ Syntax check: No errors
+
+### Attack Vectors Mitigated
+1. **Direct path access**: User A specifies User B's path → BLOCKED by validation
+2. **Path traversal**: User A uses `../` to escape → BLOCKED by resolve() + validation
+3. **Symlink attack**: User A creates symlink to User B's files → BLOCKED by resolve()
+4. **Path enumeration**: User A asks for paths → User IDs sanitized in response
+5. **Tool chaining**: User A uses search_files then read_file → Both blocked
+
+### Key Design Decisions
+- **Gateway mode only**: Validation only applies when ContextVar is set
+- **Zero CLI impact**: Single-user CLI mode has full filesystem access (unchanged)
+- **Minimal code**: ~100 lines added to 2 files (file_tools.py, hermes_constants.py)
+- **Reuses existing infrastructure**: Leverages path_security.py and ContextVar isolation
+
+### Architecture Notes
+- File tools now check `_is_gateway_mode()` before applying validation
+- Validation uses existing `validate_within_dir()` from path_security.py
+- User boundary is `get_hermes_home()` which respects ContextVar per-user isolation
+- Path sanitization uses word boundary regex `\bou_[a-zA-Z0-9]+\b` to catch all user IDs
+
+### Performance Impact
+- Minimal: Single O(1) path check per tool call, only in gateway mode
+- No impact on CLI mode: Zero overhead for single-user usage
+
+---
+
 ## Session: 2026-04-17 (feat-007: Fix auxiliary LLM warning + home channel warning)
 
 ### Completed

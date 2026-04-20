@@ -90,6 +90,56 @@ def _is_blocked_device(filepath: str) -> bool:
     return False
 
 
+def _is_gateway_mode() -> bool:
+    """Return True if running in multi-user gateway mode.
+
+    Gateway mode requires strict user boundary validation to prevent
+    cross-user access. Single-user CLI mode allows unrestricted access.
+    """
+    from hermes_constants import _HERMES_HOME_CTX
+    ctx_value = _HERMES_HOME_CTX.get(None)
+    if ctx_value is not None:
+        return True
+    return bool(os.getenv("HERMES_GATEWAY_SESSION"))
+
+
+def _validate_user_boundary(filepath: str, operation: str = "access") -> str | None:
+    """Validate that filepath is within the current user's profile directory.
+
+    Returns an error message if validation fails in gateway mode, or None if allowed.
+    In CLI mode (no ContextVar override), always returns None (unrestricted access).
+
+    Args:
+        filepath: Path to validate
+        operation: Operation name for error message ("read", "write", "search")
+
+    Returns:
+        Error message string if blocked, None if allowed
+    """
+    if not _is_gateway_mode():
+        return None
+
+    from hermes_constants import get_hermes_home
+    from tools.path_security import validate_within_dir
+
+    try:
+        user_home = get_hermes_home()
+        target_path = Path(filepath).expanduser()
+
+        error = validate_within_dir(target_path, user_home)
+        if error:
+            return (
+                f"Access denied: Cannot {operation} '{filepath}'. "
+                f"Path is outside your profile directory. "
+                f"You can only access files within your own profile."
+            )
+
+        return None
+    except Exception as e:
+        logger.debug(f"User boundary validation error: {e}")
+        return f"Access denied: Invalid path '{filepath}'"
+
+
 # Paths that file tools should refuse to write to without going through the
 # terminal tool's approval system.  These match prefixes after os.path.realpath.
 _SENSITIVE_PATH_PREFIXES = (
@@ -282,6 +332,11 @@ def clear_file_ops_cache(task_id: str = None):
 def read_file_tool(path: str, offset: int = 1, limit: int = 500, task_id: str = "default") -> str:
     """Read a file with pagination and line numbers."""
     try:
+        # ── User boundary guard (gateway mode only) ───────────────────
+        boundary_error = _validate_user_boundary(path, "read")
+        if boundary_error:
+            return json.dumps({"error": boundary_error})
+
         # ── Device path guard ─────────────────────────────────────────
         # Block paths that would hang the process (infinite output,
         # blocking on input).  Pure path check — no I/O.
@@ -540,6 +595,11 @@ def _check_file_staleness(filepath: str, task_id: str) -> str | None:
 
 def write_file_tool(path: str, content: str, task_id: str = "default") -> str:
     """Write content to a file."""
+    # ── User boundary guard (gateway mode only) ───────────────────
+    boundary_error = _validate_user_boundary(path, "write")
+    if boundary_error:
+        return tool_error(boundary_error)
+
     sensitive_err = _check_sensitive_path(path)
     if sensitive_err:
         return tool_error(sensitive_err)
@@ -566,7 +626,7 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
                new_string: str = None, replace_all: bool = False, patch: str = None,
                task_id: str = "default") -> str:
     """Patch a file using replace mode or V4A patch format."""
-    # Check sensitive paths for both replace (explicit path) and V4A patch (extract paths)
+    # Extract all paths that will be modified
     _paths_to_check = []
     if path:
         _paths_to_check.append(path)
@@ -574,6 +634,14 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
         import re as _re
         for _m in _re.finditer(r'^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(.+)$', patch, _re.MULTILINE):
             _paths_to_check.append(_m.group(1).strip())
+
+    # ── User boundary guard (gateway mode only) ───────────────────
+    for _p in _paths_to_check:
+        boundary_error = _validate_user_boundary(_p, "modify")
+        if boundary_error:
+            return tool_error(boundary_error)
+
+    # Check sensitive paths for both replace (explicit path) and V4A patch (extract paths)
     for _p in _paths_to_check:
         sensitive_err = _check_sensitive_path(_p)
         if sensitive_err:
@@ -625,6 +693,11 @@ def search_tool(pattern: str, target: str = "content", path: str = ".",
                 task_id: str = "default") -> str:
     """Search for content or files."""
     try:
+        # ── User boundary guard (gateway mode only) ───────────────────
+        boundary_error = _validate_user_boundary(path, "search")
+        if boundary_error:
+            return json.dumps({"error": boundary_error})
+
         # Track searches to detect *consecutive* repeated search loops.
         # Include pagination args so users can page through truncated
         # results without tripping the repeated-search guard.

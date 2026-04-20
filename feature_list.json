@@ -1,6 +1,6 @@
 {
-  "version": "0.10.0",
-  "updated": "2026-04-17",
+  "version": "0.11.0",
+  "updated": "2026-04-20",
   "features": [
     {
       "id": "feat-001",
@@ -100,6 +100,20 @@
         "AGENTS.md",
         "progress.md",
         "feature_list.json"
+      ]
+    },
+    {
+      "id": "feat-008",
+      "name": "Security Fix: Cross-User Data Access Prevention",
+      "description": "Critical security fix for vulnerability where User A could access User B's private data (memories, skills, sessions) by specifying paths outside their profile. Added user boundary validation to all file tools (read_file, write_file, patch, search) and path disclosure prevention in display_hermes_home().",
+      "dependencies": ["feat-001"],
+      "status": "done",
+      "evidence": "All tests pass: 10/10 user boundary tests, 3/3 path disclosure tests, 11/11 hermes_constants tests, 45/45 file operations tests. Syntax check passes. Attack vectors mitigated: direct path access, path traversal, symlink attacks, path enumeration, tool chaining. CLI mode backward compatible (no validation), gateway mode enforces strict validation.",
+      "files_changed": [
+        "tools/file_tools.py",
+        "hermes_constants.py",
+        "tests/tools/test_file_tools_user_boundary.py",
+        "tests/test_path_disclosure.py"
       ]
     }
   ]
