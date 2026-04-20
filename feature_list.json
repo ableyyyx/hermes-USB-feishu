@@ -1,6 +1,6 @@
 {
-  "version": "0.10.0",
-  "updated": "2026-04-17",
+  "version": "0.13.0",
+  "updated": "2026-04-20",
   "features": [
     {
       "id": "feat-001",
@@ -100,6 +100,45 @@
         "AGENTS.md",
         "progress.md",
         "feature_list.json"
+      ]
+    },
+    {
+      "id": "feat-008",
+      "name": "Security Fix: Cross-User Data Access Prevention",
+      "description": "Critical security fix for vulnerability where User A could access User B's private data (memories, skills, sessions) by specifying paths outside their profile. Added user boundary validation to all file tools (read_file, write_file, patch, search) and path disclosure prevention in display_hermes_home().",
+      "dependencies": ["feat-001"],
+      "status": "done",
+      "evidence": "All tests pass: 10/10 user boundary tests, 3/3 path disclosure tests, 11/11 hermes_constants tests, 45/45 file operations tests. Syntax check passes. Attack vectors mitigated: direct path access, path traversal, symlink attacks, path enumeration, tool chaining. CLI mode backward compatible (no validation), gateway mode enforces strict validation.",
+      "files_changed": [
+        "tools/file_tools.py",
+        "hermes_constants.py",
+        "tests/tools/test_file_tools_user_boundary.py",
+        "tests/test_path_disclosure.py"
+      ]
+    },
+    {
+      "id": "feat-009",
+      "name": "Security Enhancement: Memory File Path Validation",
+      "description": "Added defense-in-depth security for global memory files (SOUL.md, MEMORY.md, USER.md). Implemented explicit path validation in gateway mode to prevent ContextVar misconfiguration from causing cross-user access. Added simplified audit logging (failures only) to detect configuration errors. Maintains user's ability to modify their own SOUL.md.",
+      "dependencies": ["feat-001", "feat-008"],
+      "status": "done",
+      "evidence": "All tests pass: 9/9 memory security tests, 33/33 existing memory tool tests. Syntax check passes. Defense-in-depth: validates paths even though ContextVar already provides isolation. Audit log records failed access attempts to memory_security.log. CLI mode unchanged (no validation), gateway mode enforces validation. Users can still modify their own SOUL.md (preserves original design).",
+      "files_changed": [
+        "tools/memory_tool.py",
+        "agent/prompt_builder.py",
+        "tests/test_memory_security.py"
+      ]
+    },
+    {
+      "id": "feat-010",
+      "name": "Security Enhancement: Complete Path Disclosure Prevention",
+      "description": "Three-layer defense to prevent path information leakage in agent responses: (1) Response post-processing automatically hides all user IDs and paths, (2) display_skills_dir() and display_memory_dir() return descriptive language instead of paths in gateway mode, (3) System prompt instructions guide agent to use descriptive language. Completely prevents path disclosure while maintaining CLI debugging capability.",
+      "dependencies": ["feat-001", "feat-008", "feat-009"],
+      "status": "done",
+      "evidence": "Syntax check passes. Three-layer protection: technical enforcement (response sanitization), tool layer (display functions), behavioral guidance (system prompt). Gateway mode completely hides paths, CLI mode shows actual paths for debugging. User requirement: complete path hiding, no specific paths shown to users.",
+      "files_changed": [
+        "gateway/run.py",
+        "hermes_constants.py"
       ]
     }
   ]

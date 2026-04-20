@@ -117,10 +117,12 @@ def get_hermes_dir(new_subpath: str, old_name: str) -> Path:
 def display_hermes_home() -> str:
     """Return a user-friendly display string for the current HERMES_HOME.
 
-    Uses ``~/`` shorthand for readability::
+    In gateway multi-user mode, sanitizes user IDs from paths to prevent
+    information disclosure. Uses ``~/`` shorthand for readability::
 
         default:  ``~/.hermes``
         profile:  ``~/.hermes/profiles/coder``
+        gateway:  ``~/.hermes/user_profiles/<your-profile>``  (user ID hidden)
         custom:   ``/opt/hermes-custom``
 
     Use this in **user-facing** print/log messages instead of hardcoding
@@ -129,9 +131,85 @@ def display_hermes_home() -> str:
     """
     home = get_hermes_home()
     try:
-        return "~/" + str(home.relative_to(Path.home()))
+        rel_path = home.relative_to(Path.home())
+        display_path = "~/" + str(rel_path)
+
+        # Sanitize user IDs in gateway mode (ou_<hash> anywhere in path)
+        # Replace with generic placeholder to prevent cross-user enumeration
+        import re
+        display_path = re.sub(
+            r'\bou_[a-zA-Z0-9]+\b',
+            '<your-profile>',
+            display_path
+        )
+        return display_path
     except ValueError:
-        return str(home)
+        # Path is outside home directory
+        display_path = str(home)
+        # Still sanitize user IDs even for absolute paths
+        import re
+        display_path = re.sub(
+            r'\bou_[a-zA-Z0-9]+\b',
+            '<your-profile>',
+            display_path
+        )
+        return display_path
+
+
+def _is_gateway_mode() -> bool:
+    """Return True if running in multi-user gateway mode.
+
+    Gateway mode requires path hiding to prevent information disclosure.
+    Single-user CLI mode shows actual paths for debugging.
+    """
+    ctx_value = _HERMES_HOME_CTX.get(None)
+    if ctx_value is not None:
+        return True
+    return bool(os.getenv("HERMES_GATEWAY_SESSION"))
+
+
+def display_skills_dir() -> str:
+    """Return a user-friendly display string for the skills directory.
+
+    In gateway mode, returns generic description to prevent path disclosure.
+    In CLI mode, returns actual path for debugging.
+
+    Examples:
+        Gateway mode: "your skills directory"
+        CLI mode: "~/.hermes/skills"
+    """
+    if _is_gateway_mode():
+        return "your skills directory"
+    else:
+        # CLI mode: show actual path for debugging
+        skills_dir = get_skills_dir()
+        try:
+            rel_path = skills_dir.relative_to(Path.home())
+            return "~/" + str(rel_path)
+        except ValueError:
+            return str(skills_dir)
+
+
+def display_memory_dir() -> str:
+    """Return a user-friendly display string for the memories directory.
+
+    In gateway mode, returns generic description to prevent path disclosure.
+    In CLI mode, returns actual path for debugging.
+
+    Examples:
+        Gateway mode: "your memories directory"
+        CLI mode: "~/.hermes/memories"
+    """
+    if _is_gateway_mode():
+        return "your memories directory"
+    else:
+        # CLI mode: show actual path for debugging
+        memory_dir = get_hermes_home() / "memories"
+        try:
+            rel_path = memory_dir.relative_to(Path.home())
+            return "~/" + str(rel_path)
+        except ValueError:
+            return str(memory_dir)
 
 
 def get_subprocess_home() -> str | None:
