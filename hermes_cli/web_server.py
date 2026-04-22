@@ -2160,6 +2160,10 @@ async def list_wechat_bots():
         if not accounts_dir.exists():
             continue
         for acct_file in accounts_dir.glob("*.json"):
+            # Only credential files have a simple stem like "abc123@im.bot"
+            # Auxiliary files have compound stems: "abc123@im.bot.sync", "abc123@im.bot.context-tokens"
+            if acct_file.stem.endswith(".sync") or acct_file.stem.endswith(".context-tokens"):
+                continue
             try:
                 creds = json.loads(acct_file.read_text())
                 bots.append({
