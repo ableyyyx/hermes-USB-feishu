@@ -1896,6 +1896,39 @@ _wechat_qr_sessions: Dict[str, Dict[str, Any]] = {}
 _wechat_qr_lock = threading.Lock()
 
 
+def _generate_qr_code_image(data: str) -> str:
+    """Generate a QR code image and return as base64 data URL."""
+    try:
+        import qrcode
+        from io import BytesIO
+        import base64
+
+        # Create QR code
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_L,
+            box_size=10,
+            border=4,
+        )
+        qr.add_data(data)
+        qr.make(fit=True)
+
+        # Generate image
+        img = qr.make_image(fill_color="black", back_color="white")
+
+        # Convert to base64
+        buffer = BytesIO()
+        img.save(buffer, format="PNG")
+        img_bytes = buffer.getvalue()
+        img_base64 = base64.b64encode(img_bytes).decode()
+
+        return f"data:image/png;base64,{img_base64}"
+    except Exception as e:
+        _log.error("Failed to generate QR code image: %s", e)
+        # Fallback: return the raw data (frontend will show error)
+        return data
+
+
 @app.post("/api/wechat/qr-start")
 async def wechat_qr_start():
     """Start a new WeChat QR login session. Returns session_id."""
@@ -2028,10 +2061,13 @@ async def _run_wechat_qr_session(session_id: str):
                     })
                 return
 
+            # Generate QR code image as base64 data URL
+            qr_data_url = _generate_qr_code_image(qrcode_url or qrcode_value)
+
             with _wechat_qr_lock:
                 _wechat_qr_sessions[session_id].update({
                     "status": "wait",
-                    "qr_data": qrcode_url or qrcode_value,
+                    "qr_data": qr_data_url,
                     "qr_value": qrcode_value,
                 })
 
@@ -2123,9 +2159,12 @@ async def _run_wechat_qr_session(session_id: str):
                         qrcode_value = str(qr_resp.get("qrcode") or "")
                         qrcode_url = str(qr_resp.get("qrcode_img_content") or "")
 
+                        # Generate new QR code image
+                        qr_data_url = _generate_qr_code_image(qrcode_url or qrcode_value)
+
                         with _wechat_qr_lock:
                             _wechat_qr_sessions[session_id].update({
-                                "qr_data": qrcode_url or qrcode_value,
+                                "qr_data": qr_data_url,
                                 "qr_value": qrcode_value,
                             })
                     except Exception as e:
