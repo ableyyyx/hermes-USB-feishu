@@ -1,5 +1,5 @@
 {
-    "version": "0.14.0",
+    "version": "0.15.0",
     "updated": "2026-04-22",
     "features": [
         {
@@ -195,6 +195,24 @@
                 "gateway/platforms/weixin_multi_user.py",
                 "~/.hermes/.env"
             ]
+        },
+        {
+            "id": "feat-014",
+            "name": "WeChat Bot Self-Service Web UI",
+            "description": "Admin-facing dashboard page for managing WeChat bots, plus a standalone QR code page that admins can share with users. Users visit the link and scan to bind their WeChat account without accessing the dashboard.",
+            "dependencies": [
+                "feat-011",
+                "feat-012"
+            ],
+            "status": "done",
+            "evidence": "Verified 2026-04-22: QR code displays correctly, share link works, standalone page polls status in real-time, polling cleanup fixed (no leak on cancel).",
+            "files_changed": [
+                "hermes_cli/web_server.py",
+                "web/src/pages/WeChatBotsPage.tsx",
+                "web/src/lib/api.ts",
+                "web/src/App.tsx"
+            ]
         }
-    ]
+    ],
+    "date": "2026-04-22"
 }

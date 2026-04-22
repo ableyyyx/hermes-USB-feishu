@@ -105,3 +105,72 @@ Before ending:
 2. Update `feature_list.json` status for any features worked on
 3. List any blockers or risks discovered
 4. Ensure all modified files pass syntax check
+
+## Environment & Dependency Management
+
+### Python Virtual Environment
+
+**Location**: `/home/kevin/tongyuan/hermes-USB-feishu/.venv/`
+
+**Package Manager**: `uv` (NOT pip)
+- This is a uv-managed virtual environment
+- pip is NOT installed in the venv
+- Always use `uv pip install <package>` to install packages
+
+**Common Mistakes**:
+```bash
+# ❌ WRONG - These will fail:
+pip install qrcode[pil]
+python -m pip install qrcode[pil]
+pip3 install --user qrcode[pil]
+
+# ✅ CORRECT - Use uv:
+uv pip install qrcode[pil]
+```
+
+**Activation**:
+```bash
+source /home/kevin/tongyuan/hermes-USB-feishu/.venv/bin/activate
+```
+
+### Dashboard Startup
+
+**Command**: `hermes dashboard` (NOT `hermes web`)
+
+```bash
+cd /home/kevin/tongyuan/hermes-USB-feishu
+source .venv/bin/activate
+hermes dashboard  # Correct command
+```
+
+### Frontend Build
+
+**Build Command**:
+```bash
+cd /home/kevin/tongyuan/hermes-USB-feishu/web
+npm run build
+```
+
+**Output Location**: Built files go to `../hermes_cli/web_dist/`
+
+### Common Issues & Solutions
+
+**Issue**: "No module named 'qrcode'"
+- **Solution**: `uv pip install qrcode[pil]`
+
+**Issue**: "pip: command not found" in venv
+- **Solution**: Use `uv pip` instead (uv-managed venv)
+
+**Issue**: "externally-managed-environment"
+- **Solution**: Don't use system pip, activate venv and use `uv pip`
+
+**Issue**: Polling keeps running after dialog close
+- **Solution**: Use `useRef` to track and clear timeouts in React
+
+**Issue**: QR code shows ERR_CONNECTION_RESET
+- **Solution**: Generate QR as base64 image server-side
+
+**Issue**: 401 Unauthorized on public endpoint
+- **Solution**: Add endpoint to `_PUBLIC_API_PATHS` or bypass in auth middleware
+
+For more details, see `ENVIRONMENT_NOTES.md`.
