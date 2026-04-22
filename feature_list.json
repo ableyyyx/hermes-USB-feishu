@@ -140,6 +140,23 @@
         "gateway/run.py",
         "hermes_constants.py"
       ]
+    },
+    {
+      "id": "feat-011",
+      "name": "Multi-User WeChat Support via iLink Bot API",
+      "description": "Enable multiple WeChat bot accounts on single gateway instance. Each person authorizes their WeChat as a bot via unique QR code. Per-bot data isolation using ContextVar architecture. CLI command: hermes gateway wechat-add-user <user_id>. Per-bot profiles: user_profiles/wx_{account_id}/. Path sanitization for wx_ account IDs.",
+      "dependencies": ["feat-001"],
+      "status": "done",
+      "evidence": "All 12 tests pass. Commit 16ba1b1f created. WeixinMultiBotCoordinator manages multiple bot instances. Each bot gets isolated profile directory. Message routing uses bot's account_id for isolation. Gateway loads existing bots on startup. Path sanitization hides wx_ account IDs. CLI command generates QR codes for new users.",
+      "files_changed": [
+        "gateway/platforms/weixin.py",
+        "gateway/platforms/weixin_multi_user.py",
+        "gateway/run.py",
+        "hermes_cli/gateway.py",
+        "hermes_cli/main.py",
+        "hermes_constants.py",
+        "tests/gateway/test_weixin_multi_user.py"
+      ]
     }
   ]
 }
