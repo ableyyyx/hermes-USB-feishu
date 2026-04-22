@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { MessageSquare, Plus, Trash2, RefreshCw } from "lucide-react";
 import { api } from "@/lib/api";
 import type { WeChatBot, WeChatQRPoll } from "@/lib/api";
@@ -13,6 +13,9 @@ export default function WeChatBotsPage() {
   const [showQRDialog, setShowQRDialog] = useState(false);
   const [qrSession, setQRSession] = useState<(WeChatQRPoll & { shareUrl?: string }) | null>(null);
   const { toast, showToast } = useToast();
+
+  // Use ref to track polling timeout so we can cancel it
+  const pollTimeoutRef = useRef<number | null>(null);
 
   const loadBots = () => {
     setLoading(true);
@@ -29,6 +32,12 @@ export default function WeChatBotsPage() {
 
   const handleAddBot = async () => {
     try {
+      // Clear any existing polling timeout
+      if (pollTimeoutRef.current !== null) {
+        clearTimeout(pollTimeoutRef.current);
+        pollTimeoutRef.current = null;
+      }
+
       const resp = await api.startWeChatQR();
       setShowQRDialog(true);
       setQRSession({ status: "starting", qr_data: null, account_id: null });
@@ -52,20 +61,23 @@ export default function WeChatBotsPage() {
 
       if (status.status === "confirmed") {
         showToast("WeChat bot added successfully!", "success");
-        setTimeout(() => {
+        pollTimeoutRef.current = window.setTimeout(() => {
           setShowQRDialog(false);
           loadBots();
         }, 2000);
       } else if (status.status === "expired") {
         showToast("QR code expired", "error");
+        // Stop polling on expired
       } else if (status.status === "error") {
         showToast(status.error || "QR login failed", "error");
+        // Stop polling on error
       } else {
         // Continue polling for other statuses (starting, wait, scaned)
-        setTimeout(() => pollQRStatus(sid), 2000);
+        pollTimeoutRef.current = window.setTimeout(() => pollQRStatus(sid), 2000);
       }
     } catch (err) {
       showToast("Failed to poll QR status", "error");
+      // Stop polling on error
     }
   };
 
@@ -83,9 +95,23 @@ export default function WeChatBotsPage() {
   };
 
   const closeQRDialog = () => {
+    // Clear polling timeout when closing dialog
+    if (pollTimeoutRef.current !== null) {
+      clearTimeout(pollTimeoutRef.current);
+      pollTimeoutRef.current = null;
+    }
     setShowQRDialog(false);
     setQRSession(null);
   };
+
+  // Cleanup polling on component unmount
+  useEffect(() => {
+    return () => {
+      if (pollTimeoutRef.current !== null) {
+        clearTimeout(pollTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const STATUS_DISPLAY: Record<string, { text: string; color: string }> = {
     starting: { text: "正在生成二维码...", color: "text-blue-600" },
