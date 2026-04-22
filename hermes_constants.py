@@ -134,11 +134,11 @@ def display_hermes_home() -> str:
         rel_path = home.relative_to(Path.home())
         display_path = "~/" + str(rel_path)
 
-        # Sanitize user IDs in gateway mode (ou_<hash> anywhere in path)
+        # Sanitize user IDs in gateway mode (ou_<hash> or wx_<hash> anywhere in path)
         # Replace with generic placeholder to prevent cross-user enumeration
         import re
         display_path = re.sub(
-            r'\bou_[a-zA-Z0-9]+\b',
+            r'\b(ou|wx)_[a-zA-Z0-9]+\b',
             '<your-profile>',
             display_path
         )
@@ -149,7 +149,7 @@ def display_hermes_home() -> str:
         # Still sanitize user IDs even for absolute paths
         import re
         display_path = re.sub(
-            r'\bou_[a-zA-Z0-9]+\b',
+            r'\b(ou|wx)_[a-zA-Z0-9]+\b',
             '<your-profile>',
             display_path
         )

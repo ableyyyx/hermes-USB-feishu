@@ -2400,6 +2400,61 @@ def _setup_weixin():
         print_info(f"  User ID: {user_id}")
 
 
+def _add_wechat_user(user_id: str):
+    """Generate QR code for a new WeChat bot user."""
+    print()
+    print(color(f"  ─── 💬 Adding WeChat Bot for User: {user_id} ───", Colors.CYAN))
+    print()
+    print_info("  1. A unique QR code will be generated for this user.")
+    print_info("  2. User scans the QR code with their WeChat.")
+    print_info("  3. Credentials will be stored in user_profiles/wx_{account_id}/")
+    print_info("  4. A new bot adapter will be created for this user.")
+
+    try:
+        from gateway.platforms.weixin import check_weixin_requirements, qr_login
+    except Exception as exc:
+        print_error(f"  Weixin adapter import failed: {exc}")
+        return
+
+    if not check_weixin_requirements():
+        print_error("  Missing dependencies: aiohttp and cryptography required.")
+        return
+
+    # Create user profile directory
+    base_home = Path(get_hermes_home())
+    user_profile_dir = base_home / "user_profiles" / f"wx_{user_id}"
+    user_profile_dir.mkdir(parents=True, exist_ok=True)
+
+    print()
+    if not prompt_yes_no("  Start QR login now?", True):
+        print_info("  Cancelled.")
+        return
+
+    import asyncio
+    try:
+        # Generate QR code with user-specific hermes_home
+        credentials = asyncio.run(qr_login(str(user_profile_dir)))
+    except KeyboardInterrupt:
+        print()
+        print_warning("  WeChat setup cancelled.")
+        return
+    except Exception as exc:
+        print_error(f"  QR login failed: {exc}")
+        return
+
+    if not credentials:
+        print_warning("  QR login did not complete.")
+        return
+
+    account_id = credentials.get("account_id", "")
+    print()
+    print_success(f"WeChat bot configured for user: {user_id}")
+    print_info(f"  Account ID: {account_id}")
+    print_info(f"  Profile: user_profiles/wx_{account_id}/")
+    print()
+    print_info("  Restart gateway to activate: hermes gateway restart")
+
+
 def _setup_feishu():
     """Interactive setup for Feishu / Lark — scan-to-create or manual credentials."""
     print()
@@ -3159,3 +3214,10 @@ def gateway_command(args):
                 else:
                     print("  hermes gateway install  # Install as user service")
                     print("  sudo hermes gateway install --system  # Install as boot-time system service")
+
+    elif subcmd == "wechat-add-user":
+        user_id = getattr(args, 'user_id', None)
+        if not user_id:
+            print_error("User ID is required: hermes gateway wechat-add-user <user_id>")
+            sys.exit(1)
+        _add_wechat_user(user_id)

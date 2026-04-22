@@ -1,145 +1,200 @@
 {
-  "version": "0.13.0",
-  "updated": "2026-04-20",
-  "features": [
-    {
-      "id": "feat-001",
-      "name": "Per-User Isolation (ContextVar)",
-      "description": "ContextVar-based HERMES_HOME override for per-user data isolation in Feishu gateway. Each user gets isolated memories, skills, sessions, and state.db.",
-      "dependencies": [],
-      "status": "done",
-      "evidence": "All 12 files pass syntax check. Import tests pass. ContextVar isolation verified with concurrent asyncio tasks. Dynamic path resolution confirmed for skills_tool, skill_manager_tool, skills_hub, skills_sync, hermes_state, memory_tool.",
-      "files_changed": [
-        "hermes_constants.py",
-        "gateway/run.py",
-        "tools/skills_tool.py",
-        "tools/skill_manager_tool.py",
-        "tools/skills_hub.py",
-        "tools/skills_sync.py",
-        "hermes_state.py",
-        "run_agent.py",
-        "agent/skill_commands.py",
-        "tools/session_search_tool.py",
-        "hermes_cli/commands.py",
-        "hermes_cli/skills_hub.py"
-      ]
-    },
-    {
-      "id": "feat-002",
-      "name": "Harness Infrastructure",
-      "description": "CLAUDE.md, feature_list.json, progress.md, init.sh for structured multi-session development.",
-      "dependencies": [],
-      "status": "done",
-      "evidence": "All harness files created and verified.",
-      "files_changed": [
-        "CLAUDE.md",
-        "feature_list.json",
-        "progress.md",
-        "init.sh"
-      ]
-    },
-    {
-      "id": "feat-003",
-      "name": "Per-User Isolation Tests",
-      "description": "Add pytest tests for ContextVar isolation, concurrent asyncio tasks, memory/skills path resolution, and SessionDB isolation.",
-      "dependencies": ["feat-001"],
-      "status": "done",
-      "evidence": "23 unit tests (22 passed, 1 skipped due to missing httpx in system Python). Covers: ContextVar lifecycle, dynamic path resolution, async task isolation, thread propagation via copy_context(), SessionDB isolation, profile directory creation, CLI fallback behavior.",
-      "files_changed": [
-        "tests/test_per_user_isolation.py",
-        "tests/conftest.py"
-      ]
-    },
-    {
-      "id": "feat-004",
-      "name": "Integration Testing with Feishu Gateway",
-      "description": "End-to-end test: two Feishu users send messages simultaneously, verify memories/skills/sessions are fully isolated.",
-      "dependencies": ["feat-001", "feat-003"],
-      "status": "done",
-      "evidence": "10 integration tests all passed. Covers: profile dir creation, ContextVar injection/cleanup, concurrent user isolation, memory invisibility between users, per-user SessionDB cache, session data isolation, background context propagation, shared infrastructure unaffected.",
-      "files_changed": [
-        "tests/gateway/test_per_user_gateway_isolation.py"
-      ]
-    },
-    {
-      "id": "feat-005",
-      "name": "Fix: Operator Config Isolation (401 / Wrong Provider Bug)",
-      "description": "Hotfix for per-user ContextVar being too broad: _get_model_config() was reading from user profile (no config.yaml) → empty config → provider=auto → OpenRouter → HTTP 401. Fixed by clearing ContextVar in _get_model_config() before calling load_config().",
-      "dependencies": ["feat-001"],
-      "status": "done",
-      "evidence": "Syntax check passes. Rule documented in CLAUDE.md and AGENTS.md. Observed in production 2026-04-17 with real Feishu users. Pattern: operator-level config functions must clear ContextVar before reading.",
-      "files_changed": [
-        "hermes_cli/runtime_provider.py",
-        "CLAUDE.md",
-        "AGENTS.md",
-        "progress.md"
-      ]
-    },
-    {
-      "id": "feat-007",
-      "name": "Fix: get_config_path bypasses ContextVar + FEISHU_HOME_CHANNEL",
-      "description": "Root fix for all auxiliary LLM / compression warnings: get_config_path() and get_env_path() now use _get_base_hermes_home() (env var, not ContextVar) so load_config() always returns the operator's base config regardless of per-user gateway context. Also sets FEISHU_HOME_CHANNEL in .env to suppress the home channel warning.",
-      "dependencies": ["feat-001", "feat-005"],
-      "status": "done",
-      "evidence": "Verified: with ContextVar set to /tmp/user_abc, get_config_path() still returns base ~/.hermes/config.yaml. get_skills_dir() correctly returns /tmp/user_abc/skills. Fixes auxiliary LLM warning and home channel warning without touching auxiliary_client.py.",
-      "files_changed": [
-        "hermes_constants.py",
-        "~/.hermes/.env"
-      ]
-    },
-    {
-      "id": "feat-006",
-      "name": "Fix: AIAgent Config + Document MEMORY/USER/SOUL files",
-      "description": "Apply clear-ContextVar pattern to run_agent.py AIAgent init so operator memory/skill config is read from base home. Document MEMORY.md/USER.md/SOUL.md distinction: SOUL.md pre-created at profile init, MEMORY.md/USER.md auto-written by agent after N turns or /reset.",
-      "dependencies": ["feat-001", "feat-005"],
-      "status": "done",
-      "evidence": "Syntax check passes. MEMORY.md not created = expected behavior (only casual food conversation, flush agent correctly decided nothing worth saving). Fixed architectural gap: run_agent.py now reads base config for memory settings.",
-      "files_changed": [
-        "run_agent.py",
-        "CLAUDE.md",
-        "AGENTS.md",
-        "progress.md",
-        "feature_list.json"
-      ]
-    },
-    {
-      "id": "feat-008",
-      "name": "Security Fix: Cross-User Data Access Prevention",
-      "description": "Critical security fix for vulnerability where User A could access User B's private data (memories, skills, sessions) by specifying paths outside their profile. Added user boundary validation to all file tools (read_file, write_file, patch, search) and path disclosure prevention in display_hermes_home().",
-      "dependencies": ["feat-001"],
-      "status": "done",
-      "evidence": "All tests pass: 10/10 user boundary tests, 3/3 path disclosure tests, 11/11 hermes_constants tests, 45/45 file operations tests. Syntax check passes. Attack vectors mitigated: direct path access, path traversal, symlink attacks, path enumeration, tool chaining. CLI mode backward compatible (no validation), gateway mode enforces strict validation.",
-      "files_changed": [
-        "tools/file_tools.py",
-        "hermes_constants.py",
-        "tests/tools/test_file_tools_user_boundary.py",
-        "tests/test_path_disclosure.py"
-      ]
-    },
-    {
-      "id": "feat-009",
-      "name": "Security Enhancement: Memory File Path Validation",
-      "description": "Added defense-in-depth security for global memory files (SOUL.md, MEMORY.md, USER.md). Implemented explicit path validation in gateway mode to prevent ContextVar misconfiguration from causing cross-user access. Added simplified audit logging (failures only) to detect configuration errors. Maintains user's ability to modify their own SOUL.md.",
-      "dependencies": ["feat-001", "feat-008"],
-      "status": "done",
-      "evidence": "All tests pass: 9/9 memory security tests, 33/33 existing memory tool tests. Syntax check passes. Defense-in-depth: validates paths even though ContextVar already provides isolation. Audit log records failed access attempts to memory_security.log. CLI mode unchanged (no validation), gateway mode enforces validation. Users can still modify their own SOUL.md (preserves original design).",
-      "files_changed": [
-        "tools/memory_tool.py",
-        "agent/prompt_builder.py",
-        "tests/test_memory_security.py"
-      ]
-    },
-    {
-      "id": "feat-010",
-      "name": "Security Enhancement: Complete Path Disclosure Prevention",
-      "description": "Three-layer defense to prevent path information leakage in agent responses: (1) Response post-processing automatically hides all user IDs and paths, (2) display_skills_dir() and display_memory_dir() return descriptive language instead of paths in gateway mode, (3) System prompt instructions guide agent to use descriptive language. Completely prevents path disclosure while maintaining CLI debugging capability.",
-      "dependencies": ["feat-001", "feat-008", "feat-009"],
-      "status": "done",
-      "evidence": "Syntax check passes. Three-layer protection: technical enforcement (response sanitization), tool layer (display functions), behavioral guidance (system prompt). Gateway mode completely hides paths, CLI mode shows actual paths for debugging. User requirement: complete path hiding, no specific paths shown to users.",
-      "files_changed": [
-        "gateway/run.py",
-        "hermes_constants.py"
-      ]
-    }
-  ]
+    "version": "0.14.0",
+    "updated": "2026-04-22",
+    "features": [
+        {
+            "id": "feat-001",
+            "name": "Per-User Isolation (ContextVar)",
+            "description": "ContextVar-based HERMES_HOME override for per-user data isolation in Feishu gateway. Each user gets isolated memories, skills, sessions, and state.db.",
+            "dependencies": [],
+            "status": "done",
+            "evidence": "All 12 files pass syntax check. Import tests pass. ContextVar isolation verified with concurrent asyncio tasks. Dynamic path resolution confirmed for skills_tool, skill_manager_tool, skills_hub, skills_sync, hermes_state, memory_tool.",
+            "files_changed": [
+                "hermes_constants.py",
+                "gateway/run.py",
+                "tools/skills_tool.py",
+                "tools/skill_manager_tool.py",
+                "tools/skills_hub.py",
+                "tools/skills_sync.py",
+                "hermes_state.py",
+                "run_agent.py",
+                "agent/skill_commands.py",
+                "tools/session_search_tool.py",
+                "hermes_cli/commands.py",
+                "hermes_cli/skills_hub.py"
+            ]
+        },
+        {
+            "id": "feat-002",
+            "name": "Harness Infrastructure",
+            "description": "CLAUDE.md, feature_list.json, progress.md, init.sh for structured multi-session development.",
+            "dependencies": [],
+            "status": "done",
+            "evidence": "All harness files created and verified.",
+            "files_changed": [
+                "CLAUDE.md",
+                "feature_list.json",
+                "progress.md",
+                "init.sh"
+            ]
+        },
+        {
+            "id": "feat-003",
+            "name": "Per-User Isolation Tests",
+            "description": "Add pytest tests for ContextVar isolation, concurrent asyncio tasks, memory/skills path resolution, and SessionDB isolation.",
+            "dependencies": [
+                "feat-001"
+            ],
+            "status": "done",
+            "evidence": "23 unit tests (22 passed, 1 skipped due to missing httpx in system Python). Covers: ContextVar lifecycle, dynamic path resolution, async task isolation, thread propagation via copy_context(), SessionDB isolation, profile directory creation, CLI fallback behavior.",
+            "files_changed": [
+                "tests/test_per_user_isolation.py",
+                "tests/conftest.py"
+            ]
+        },
+        {
+            "id": "feat-004",
+            "name": "Integration Testing with Feishu Gateway",
+            "description": "End-to-end test: two Feishu users send messages simultaneously, verify memories/skills/sessions are fully isolated.",
+            "dependencies": [
+                "feat-001",
+                "feat-003"
+            ],
+            "status": "done",
+            "evidence": "10 integration tests all passed. Covers: profile dir creation, ContextVar injection/cleanup, concurrent user isolation, memory invisibility between users, per-user SessionDB cache, session data isolation, background context propagation, shared infrastructure unaffected.",
+            "files_changed": [
+                "tests/gateway/test_per_user_gateway_isolation.py"
+            ]
+        },
+        {
+            "id": "feat-005",
+            "name": "Fix: Operator Config Isolation (401 / Wrong Provider Bug)",
+            "description": "Hotfix for per-user ContextVar being too broad: _get_model_config() was reading from user profile (no config.yaml) → empty config → provider=auto → OpenRouter → HTTP 401. Fixed by clearing ContextVar in _get_model_config() before calling load_config().",
+            "dependencies": [
+                "feat-001"
+            ],
+            "status": "done",
+            "evidence": "Syntax check passes. Rule documented in CLAUDE.md and AGENTS.md. Observed in production 2026-04-17 with real Feishu users. Pattern: operator-level config functions must clear ContextVar before reading.",
+            "files_changed": [
+                "hermes_cli/runtime_provider.py",
+                "CLAUDE.md",
+                "AGENTS.md",
+                "progress.md"
+            ]
+        },
+        {
+            "id": "feat-007",
+            "name": "Fix: get_config_path bypasses ContextVar + FEISHU_HOME_CHANNEL",
+            "description": "Root fix for all auxiliary LLM / compression warnings: get_config_path() and get_env_path() now use _get_base_hermes_home() (env var, not ContextVar) so load_config() always returns the operator's base config regardless of per-user gateway context. Also sets FEISHU_HOME_CHANNEL in .env to suppress the home channel warning.",
+            "dependencies": [
+                "feat-001",
+                "feat-005"
+            ],
+            "status": "done",
+            "evidence": "Verified: with ContextVar set to /tmp/user_abc, get_config_path() still returns base ~/.hermes/config.yaml. get_skills_dir() correctly returns /tmp/user_abc/skills. Fixes auxiliary LLM warning and home channel warning without touching auxiliary_client.py.",
+            "files_changed": [
+                "hermes_constants.py",
+                "~/.hermes/.env"
+            ]
+        },
+        {
+            "id": "feat-006",
+            "name": "Fix: AIAgent Config + Document MEMORY/USER/SOUL files",
+            "description": "Apply clear-ContextVar pattern to run_agent.py AIAgent init so operator memory/skill config is read from base home. Document MEMORY.md/USER.md/SOUL.md distinction: SOUL.md pre-created at profile init, MEMORY.md/USER.md auto-written by agent after N turns or /reset.",
+            "dependencies": [
+                "feat-001",
+                "feat-005"
+            ],
+            "status": "done",
+            "evidence": "Syntax check passes. MEMORY.md not created = expected behavior (only casual food conversation, flush agent correctly decided nothing worth saving). Fixed architectural gap: run_agent.py now reads base config for memory settings.",
+            "files_changed": [
+                "run_agent.py",
+                "CLAUDE.md",
+                "AGENTS.md",
+                "progress.md",
+                "feature_list.json"
+            ]
+        },
+        {
+            "id": "feat-008",
+            "name": "Security Fix: Cross-User Data Access Prevention",
+            "description": "Critical security fix for vulnerability where User A could access User B's private data (memories, skills, sessions) by specifying paths outside their profile. Added user boundary validation to all file tools (read_file, write_file, patch, search) and path disclosure prevention in display_hermes_home().",
+            "dependencies": [
+                "feat-001"
+            ],
+            "status": "done",
+            "evidence": "All tests pass: 10/10 user boundary tests, 3/3 path disclosure tests, 11/11 hermes_constants tests, 45/45 file operations tests. Syntax check passes. Attack vectors mitigated: direct path access, path traversal, symlink attacks, path enumeration, tool chaining. CLI mode backward compatible (no validation), gateway mode enforces strict validation.",
+            "files_changed": [
+                "tools/file_tools.py",
+                "hermes_constants.py",
+                "tests/tools/test_file_tools_user_boundary.py",
+                "tests/test_path_disclosure.py"
+            ]
+        },
+        {
+            "id": "feat-009",
+            "name": "Security Enhancement: Memory File Path Validation",
+            "description": "Added defense-in-depth security for global memory files (SOUL.md, MEMORY.md, USER.md). Implemented explicit path validation in gateway mode to prevent ContextVar misconfiguration from causing cross-user access. Added simplified audit logging (failures only) to detect configuration errors. Maintains user's ability to modify their own SOUL.md.",
+            "dependencies": [
+                "feat-001",
+                "feat-008"
+            ],
+            "status": "done",
+            "evidence": "All tests pass: 9/9 memory security tests, 33/33 existing memory tool tests. Syntax check passes. Defense-in-depth: validates paths even though ContextVar already provides isolation. Audit log records failed access attempts to memory_security.log. CLI mode unchanged (no validation), gateway mode enforces validation. Users can still modify their own SOUL.md (preserves original design).",
+            "files_changed": [
+                "tools/memory_tool.py",
+                "agent/prompt_builder.py",
+                "tests/test_memory_security.py"
+            ]
+        },
+        {
+            "id": "feat-010",
+            "name": "Security Enhancement: Complete Path Disclosure Prevention",
+            "description": "Three-layer defense to prevent path information leakage in agent responses: (1) Response post-processing automatically hides all user IDs and paths, (2) display_skills_dir() and display_memory_dir() return descriptive language instead of paths in gateway mode, (3) System prompt instructions guide agent to use descriptive language. Completely prevents path disclosure while maintaining CLI debugging capability.",
+            "dependencies": [
+                "feat-001",
+                "feat-008",
+                "feat-009"
+            ],
+            "status": "done",
+            "evidence": "Syntax check passes. Three-layer protection: technical enforcement (response sanitization), tool layer (display functions), behavioral guidance (system prompt). Gateway mode completely hides paths, CLI mode shows actual paths for debugging. User requirement: complete path hiding, no specific paths shown to users.",
+            "files_changed": [
+                "gateway/run.py",
+                "hermes_constants.py"
+            ]
+        },
+        {
+            "id": "feat-011",
+            "name": "Multi-User WeChat Support via iLink Bot API",
+            "description": "Enable multiple WeChat bot accounts on single gateway instance. Each person authorizes their WeChat as a bot via unique QR code. Per-bot data isolation using ContextVar architecture. CLI command: hermes gateway wechat-add-user <user_id>. Per-bot profiles: user_profiles/wx_{account_id}/. Path sanitization for wx_ account IDs.",
+            "dependencies": [
+                "feat-001"
+            ],
+            "status": "done",
+            "evidence": "All 12 tests pass. Commit 16ba1b1f created. WeixinMultiBotCoordinator manages multiple bot instances. Each bot gets isolated profile directory. Message routing uses bot's account_id for isolation. Gateway loads existing bots on startup. Path sanitization hides wx_ account IDs. CLI command generates QR codes for new users.",
+            "files_changed": [
+                "gateway/platforms/weixin.py",
+                "gateway/platforms/weixin_multi_user.py",
+                "gateway/run.py",
+                "hermes_cli/gateway.py",
+                "hermes_cli/main.py",
+                "hermes_constants.py",
+                "tests/gateway/test_weixin_multi_user.py"
+            ]
+        },
+        {
+            "id": "feat-012",
+            "name": "Fix: WeChat Multi-Bot Message Handler Registration",
+            "description": "Critical bug fix: WeixinMultiBotCoordinator created adapters without registering message handlers, so bots received messages but never responded. Also removed stale single-bot WEIXIN_* env vars that caused 'Session expired' errors from an expired token.",
+            "dependencies": [
+                "feat-011"
+            ],
+            "status": "done",
+            "evidence": "Verified in production 2026-04-22: after fix, inbound messages are fully processed (inbound → response ready → Sending response, ~11.5s). No Session expired errors. Both bots (addd6c96, a02379b7) respond independently.",
+            "files_changed": [
+                "gateway/platforms/weixin_multi_user.py",
+                "~/.hermes/.env"
+            ]
+        }
+    ]
 }

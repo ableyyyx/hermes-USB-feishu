@@ -1,5 +1,119 @@
 # Session Progress Log
 
+## Session: 2026-04-22 (feat-011: Multi-User WeChat Support via iLink Bot API)
+
+### Background
+
+Hermes only supported a single WeChat bot account per gateway instance. Authorization credentials were stored in global environment variables, requiring a gateway restart for each user. This feature enables multiple people to each authorize their own WeChat account as a bot, with each bot running independently and data isolated per bot account.
+
+### Completed
+
+- **feat-011**: Multi-user WeChat support (Phases 1-8)
+
+  **Phase 1: CLI Command** (`hermes_cli/gateway.py`, `hermes_cli/main.py`)
+  - Added `hermes gateway wechat-add-user <user_id>` subcommand
+  - `_add_wechat_user()` generates QR code, stores credentials in `user_profiles/wx_{account_id}/`
+
+  **Phase 2: Multi-Bot Coordinator** (`gateway/platforms/weixin_multi_user.py`)
+  - `WeixinMultiBotCoordinator` manages multiple `WeixinAdapter` instances
+  - `load_existing_bots()` discovers bots from `user_profiles/wx_*/weixin/accounts/*.json`
+  - `_create_adapter_for_bot()` returns bool to indicate connection success/failure
+  - Bug fix: `loaded_count` only increments when `_create_adapter_for_bot()` returns True
+
+  **Phase 3: Per-Bot Message Routing** (`gateway/platforms/weixin.py`)
+  - `WeixinAdapter.__init__()` accepts `hermes_home` parameter for per-bot profile paths
+  - Message routing uses `wx_{account_id}` as `user_id` for ContextVar isolation
+
+  **Phase 4: Gateway Integration** (`gateway/run.py`)
+  - Coordinator initialized on gateway startup, loads existing bots
+  - Coordinator disconnected on gateway shutdown
+  - Response sanitization extended to hide `wx_` account IDs
+
+  **Phase 5: Path Sanitization** (`hermes_constants.py`)
+  - Regex updated: `r'\b(ou|wx)_[a-zA-Z0-9]+\b'` → `<your-profile>`
+  - Both Feishu (`ou_`) and WeChat (`wx_`) user IDs hidden
+
+  **Phase 6-7: Config & CLI** (no additional code changes needed)
+  - `config.extra` already supports `multi_bot` flag
+  - CLI argument parser added for `wechat-add-user`
+
+  **Phase 8: Testing** (`tests/gateway/test_weixin_multi_user.py`)
+  - 12 tests, all passing
+  - Covers: coordinator lifecycle, bot loading, multi-bot, disconnect, failed connect
+  - Covers: per-bot isolation (directory structure, credentials)
+  - Covers: path sanitization (wx_, ou_, non-user paths)
+  - Tests use synchronous wrappers (no pytest-asyncio dependency)
+
+### Test Results
+
+- ✅ WeChat multi-user tests: 12/12 passed
+- ✅ Syntax check: No errors
+- ✅ Commit: 16ba1b1f on branch `wechat-users`
+
+### Key Design Decisions
+
+1. **WeChat vs Feishu isolation model**: Feishu = one bot, many users (isolate by `from_user_id`). WeChat = many bots (isolate by `account_id`)
+2. **Profile directory**: `user_profiles/wx_{account_id}/` — same structure as Feishu profiles
+3. **Backward compatible**: Legacy single-bot mode still works with env vars
+4. **No pytest-asyncio**: Tests use `asyncio.get_event_loop().run_until_complete()` wrapper
+
+### Architecture Notes
+
+- Each bot gets its own `WeixinAdapter` instance with dedicated long-poll connection
+- ContextVar isolation reuses existing feat-001 infrastructure
+- Coordinator auto-discovers bots from filesystem on gateway startup
+- Multiple adapters registered with gateway's message routing
+
+### Bug Fix: Message Handler Registration (2026-04-22)
+
+**Problem**: After adding two WeChat bots via `hermes gateway wechat-add-user`, bots received messages but did not respond. Error logs showed "Session expired; pausing for 10 minutes".
+
+**Root Causes** (3 issues):
+1. **Expired single-bot config**: `.env` file contained old `WEIXIN_*` environment variables with expired token (`04d9c4f506eb@im.bot`), causing "Session expired" errors
+2. **Missing message handlers**: Multi-bot coordinator created adapters but didn't set `message_handler`, so messages couldn't be routed to gateway for processing
+3. **Incorrect adapter registration**: Coordinator overwrote `_gateway._adapters[Platform.WEIXIN]` for each bot, only keeping the last one
+
+**Diagnosis Process**:
+- Checked gateway logs: bots loaded successfully but no "inbound message" logs
+- Compared with working logs from 2026-04-21: missing `gateway.run: inbound message` line
+- Traced code: `WeixinAdapter._process_message()` → `handle_message()` → no handler set
+- Found gateway sets handlers at line 1964 in `run.py`, but coordinator didn't
+
+**Fix Applied** (`gateway/platforms/weixin_multi_user.py`):
+```python
+# Added in _create_adapter_for_bot() before adapter.connect():
+adapter.set_message_handler(self._gateway._handle_message)
+adapter.set_fatal_error_handler(self._gateway._handle_adapter_fatal_error)
+adapter.set_session_store(self._gateway.session_store)
+adapter.set_busy_session_handler(self._gateway._handle_active_session_busy_message)
+
+# Removed incorrect line:
+# self._gateway._adapters[Platform.WEIXIN] = adapter
+```
+
+**Environment Fix** (`.env`):
+- Removed all old `WEIXIN_*` environment variables (ACCOUNT_ID, TOKEN, BASE_URL, etc.)
+- Added `GATEWAY_ALLOW_ALL_USERS=true` to allow all users to access bots
+
+**Verification**:
+- ✅ Gateway loads 2 WeChat bots successfully
+- ✅ No "Session expired" errors
+- ✅ Messages received and processed: `inbound message` → `response ready` → `Sending response`
+- ✅ Response time: ~11.5s for first message
+
+**Files Modified**:
+- `gateway/platforms/weixin_multi_user.py` - Added handler registration
+- `.env` - Removed old WEIXIN_* config, added GATEWAY_ALLOW_ALL_USERS
+
+### Open Questions
+
+1. **End-to-end testing**: Requires real iLink Bot API credentials and WeChat accounts
+2. **Token expiration**: Bot owner must re-scan QR if token expires (no auto-refresh)
+3. **Bot removal**: Currently manual deletion of profile directory
+4. **Connection limits**: iLink API may have per-IP connection limits (untested at scale)
+
+---
+
 ## Session: 2026-04-20 (feat-010: Complete Path Disclosure Prevention)
 
 ### Background

@@ -353,9 +353,9 @@ def _sanitize_response_content(content: str) -> str:
         content
     )
 
-    # 2. Hide full paths with user_profiles
+    # 2. Hide full paths with user_profiles (ou_ for Feishu, wx_ for WeChat)
     content = re.sub(
-        r'(/[^\s]*)?/user_profiles/ou_[a-zA-Z0-9]+/[^\s]*',
+        r'(/[^\s]*)?/user_profiles/(ou|wx)_[a-zA-Z0-9]+/[^\s]*',
         'your profile directory',
         content
     )
@@ -757,6 +757,9 @@ class GatewayRunner:
         # Event hook system
         from gateway.hooks import HookRegistry
         self.hooks = HookRegistry()
+
+        # WeChat multi-bot coordinator (initialized on demand)
+        self._weixin_coordinator = None
 
         # Per-chat voice reply mode: "off" | "voice_only" | "all"
         self._voice_mode: Dict[str, str] = self._load_voice_modes()
@@ -2063,9 +2066,21 @@ class GatewayRunner:
             logger.warning("No messaging platforms enabled.")
             logger.info("Gateway will continue running for cron job execution.")
         
+        # Load multi-bot WeChat users from user_profiles/wx_* directories
+        try:
+            from gateway.platforms.weixin_multi_user import WeixinMultiBotCoordinator
+            coordinator = WeixinMultiBotCoordinator(self)
+            bot_count = await coordinator.load_existing_bots()
+            if bot_count > 0:
+                self._weixin_coordinator = coordinator
+                connected_count += bot_count
+                logger.info("Loaded %d WeChat bot(s) via multi-bot coordinator", bot_count)
+        except Exception as e:
+            logger.debug("WeChat multi-bot coordinator not available: %s", e)
+
         # Update delivery router with adapters
         self.delivery_router.adapters = self.adapters
-        
+
         self._running = True
         self._update_runtime_status("running")
         
@@ -2447,6 +2462,13 @@ class GatewayRunner:
             self._background_tasks.clear()
 
             self.adapters.clear()
+            # Disconnect multi-bot WeChat coordinator
+            if self._weixin_coordinator:
+                try:
+                    await self._weixin_coordinator.disconnect_all()
+                except Exception as e:
+                    logger.debug("WeChat multi-bot coordinator disconnect error: %s", e)
+                self._weixin_coordinator = None
             self._running_agents.clear()
             self._pending_messages.clear()
             self._pending_approvals.clear()
