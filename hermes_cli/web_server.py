@@ -1969,6 +1969,7 @@ async def wechat_qr_poll(session_id: str):
 @app.get("/qr/{session_id}")
 async def wechat_qr_page(session_id: str):
     """Standalone QR code page for users (no auth required)."""
+    _log.info(f"Serving standalone QR page for session: {session_id}")
     # This is a public page - users don't need dashboard access
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
