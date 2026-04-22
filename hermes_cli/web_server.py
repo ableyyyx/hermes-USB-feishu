@@ -15,12 +15,15 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import secrets
+import shutil
 import sys
 import threading
 import time
 import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -100,6 +103,7 @@ _PUBLIC_API_PATHS: frozenset = frozenset({
     "/api/dashboard/themes",
     "/api/dashboard/plugins",
     "/api/dashboard/plugins/rescan",
+    "/api/wechat/qr-poll",  # Public: users need to poll QR status without auth
 })
 
 
@@ -118,6 +122,9 @@ def _require_token(request: Request) -> None:
 async def auth_middleware(request: Request, call_next):
     """Require the session token on all /api/ routes except the public list."""
     path = request.url.path
+    # Allow /api/wechat/qr-poll/* without auth (for standalone QR page)
+    if path.startswith("/api/wechat/qr-poll/"):
+        return await call_next(request)
     if path.startswith("/api/") and path not in _PUBLIC_API_PATHS and not path.startswith("/api/plugins/"):
         auth = request.headers.get("authorization", "")
         expected = f"Bearer {_SESSION_TOKEN}"
@@ -1882,6 +1889,515 @@ async def delete_cron_job(job_id: str):
     if not remove_job(job_id):
         raise HTTPException(status_code=404, detail="Job not found")
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# WeChat Bot Management endpoints
+# ---------------------------------------------------------------------------
+
+# In-memory QR session state (not persisted)
+_wechat_qr_sessions: Dict[str, Dict[str, Any]] = {}
+_wechat_qr_lock = threading.Lock()
+
+
+def _generate_qr_code_image(data: str) -> str:
+    """Generate a QR code image and return as base64 data URL."""
+    try:
+        import qrcode
+        from io import BytesIO
+        import base64
+
+        # Create QR code
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_L,
+            box_size=10,
+            border=4,
+        )
+        qr.add_data(data)
+        qr.make(fit=True)
+
+        # Generate image
+        img = qr.make_image(fill_color="black", back_color="white")
+
+        # Convert to base64
+        buffer = BytesIO()
+        img.save(buffer, format="PNG")
+        img_bytes = buffer.getvalue()
+        img_base64 = base64.b64encode(img_bytes).decode()
+
+        return f"data:image/png;base64,{img_base64}"
+    except Exception as e:
+        _log.error("Failed to generate QR code image: %s", e)
+        # Fallback: return the raw data (frontend will show error)
+        return data
+
+
+@app.post("/api/wechat/qr-start")
+async def wechat_qr_start():
+    """Start a new WeChat QR login session. Returns session_id."""
+    session_id = uuid.uuid4().hex
+    with _wechat_qr_lock:
+        _wechat_qr_sessions[session_id] = {
+            "status": "starting",
+            "started_at": time.time(),
+            "qr_data": None,
+            "qr_value": None,
+            "account_id": None,
+            "error": None,
+        }
+    # Launch background task that calls iLink API and polls
+    asyncio.create_task(_run_wechat_qr_session(session_id))
+    return {"session_id": session_id}
+
+
+@app.get("/api/wechat/qr-poll/{session_id}")
+async def wechat_qr_poll(session_id: str):
+    """Poll QR login session status. Frontend calls this every 2 seconds."""
+    with _wechat_qr_lock:
+        sess = _wechat_qr_sessions.get(session_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {
+        "status": sess["status"],
+        "qr_data": sess.get("qr_data"),
+        "account_id": sess.get("account_id"),
+        "error": sess.get("error"),
+    }
+
+
+@app.get("/qr/{session_id}")
+async def wechat_qr_page(session_id: str):
+    """Standalone QR code page for users (no auth required)."""
+    _log.info(f"Serving standalone QR page for session: {session_id}")
+    # This is a public page - users don't need dashboard access
+    html = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>微信机器人绑定</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }}
+        .container {{
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+        }}
+        h1 {{
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }}
+        .subtitle {{
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }}
+        .qr-container {{
+            background: #f5f5f5;
+            border-radius: 15px;
+            padding: 30px;
+            margin: 20px 0;
+        }}
+        #qr-image {{
+            max-width: 100%;
+            height: auto;
+            border-radius: 10px;
+        }}
+        .status {{
+            font-size: 18px;
+            font-weight: 500;
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 10px;
+        }}
+        .status.loading {{ background: #e3f2fd; color: #1976d2; }}
+        .status.wait {{ background: #e8f5e9; color: #388e3c; }}
+        .status.scaned {{ background: #fff3e0; color: #f57c00; }}
+        .status.confirmed {{ background: #e8f5e9; color: #2e7d32; }}
+        .status.expired {{ background: #ffebee; color: #c62828; }}
+        .status.error {{ background: #ffebee; color: #c62828; }}
+        .spinner {{
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }}
+        @keyframes spin {{
+            0% {{ transform: rotate(0deg); }}
+            100% {{ transform: rotate(360deg); }}
+        }}
+        .success-icon {{
+            font-size: 60px;
+            color: #4caf50;
+            margin: 20px 0;
+        }}
+        .footer {{
+            margin-top: 30px;
+            color: #999;
+            font-size: 12px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 微信机器人绑定</h1>
+        <p class="subtitle">请使用微信扫描下方二维码</p>
+
+        <div id="status-container"></div>
+        <div class="qr-container" id="qr-container"></div>
+
+        <div class="footer">
+            Powered by Hermes Agent
+        </div>
+    </div>
+
+    <script>
+        const sessionId = '{session_id}';
+        let pollInterval;
+
+        async function pollStatus() {{
+            try {{
+                const response = await fetch(`/api/wechat/qr-poll/${{sessionId}}`);
+                if (!response.ok) {{
+                    showError('会话已过期或不存在');
+                    clearInterval(pollInterval);
+                    return;
+                }}
+
+                const data = await response.json();
+                updateUI(data);
+
+                if (data.status === 'confirmed' || data.status === 'expired' || data.status === 'error') {{
+                    clearInterval(pollInterval);
+                }}
+            }} catch (error) {{
+                console.error('Poll error:', error);
+            }}
+        }}
+
+        function updateUI(data) {{
+            const statusContainer = document.getElementById('status-container');
+            const qrContainer = document.getElementById('qr-container');
+
+            switch(data.status) {{
+                case 'starting':
+                    statusContainer.innerHTML = '<div class="status loading">正在生成二维码...</div><div class="spinner"></div>';
+                    qrContainer.innerHTML = '';
+                    break;
+
+                case 'wait':
+                    statusContainer.innerHTML = '<div class="status wait">请用微信扫描二维码</div>';
+                    if (data.qr_data) {{
+                        qrContainer.innerHTML = `<img id="qr-image" src="${{data.qr_data}}" alt="QR Code">`;
+                    }}
+                    break;
+
+                case 'scaned':
+                    statusContainer.innerHTML = '<div class="status scaned">已扫码，请在微信中确认...</div><div class="spinner"></div>';
+                    break;
+
+                case 'confirmed':
+                    statusContainer.innerHTML = '<div class="success-icon">✓</div><div class="status confirmed">绑定成功！</div>';
+                    qrContainer.innerHTML = '<p style="color: #666; margin-top: 20px;">您的微信机器人已成功绑定<br>Account ID: ' + (data.account_id || '') + '</p>';
+                    break;
+
+                case 'expired':
+                    statusContainer.innerHTML = '<div class="status expired">二维码已过期</div>';
+                    qrContainer.innerHTML = '<p style="color: #999; margin-top: 20px;">请联系管理员重新生成二维码</p>';
+                    break;
+
+                case 'error':
+                    statusContainer.innerHTML = '<div class="status error">绑定失败</div>';
+                    qrContainer.innerHTML = '<p style="color: #999; margin-top: 20px;">' + (data.error || '未知错误') + '</p>';
+                    break;
+            }}
+        }}
+
+        function showError(message) {{
+            document.getElementById('status-container').innerHTML = '<div class="status error">' + message + '</div>';
+            document.getElementById('qr-container').innerHTML = '';
+        }}
+
+        // Start polling
+        pollStatus();
+        pollInterval = setInterval(pollStatus, 2000);
+    </script>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
+@app.get("/api/wechat/bots")
+async def list_wechat_bots():
+    """List all configured WeChat bots from user_profiles/wx_*/"""
+    bots = []
+    profiles_dir = get_hermes_home() / "user_profiles"
+    if not profiles_dir.exists():
+        return {"bots": []}
+
+    for p in profiles_dir.iterdir():
+        if not p.is_dir() or not p.name.startswith("wx_"):
+            continue
+        accounts_dir = p / "weixin" / "accounts"
+        if not accounts_dir.exists():
+            continue
+        for acct_file in accounts_dir.glob("*.json"):
+            # Only credential files have a simple stem like "abc123@im.bot"
+            # Auxiliary files have compound stems: "abc123@im.bot.sync", "abc123@im.bot.context-tokens"
+            if acct_file.stem.endswith(".sync") or acct_file.stem.endswith(".context-tokens"):
+                continue
+            try:
+                creds = json.loads(acct_file.read_text())
+                bots.append({
+                    "account_id": creds.get("account_id", acct_file.stem),
+                    "user_id": creds.get("user_id", ""),
+                    "profile_dir": p.name,
+                })
+            except Exception as e:
+                _log.warning("Failed to read WeChat bot credentials %s: %s", acct_file, e)
+    return {"bots": bots}
+
+
+@app.delete("/api/wechat/bots/{account_id}")
+async def delete_wechat_bot(account_id: str):
+    """Remove a WeChat bot profile directory."""
+    # Validate account_id: only allow safe chars (alphanum, @, ., -, _)
+    if not re.match(r'^[a-zA-Z0-9@._-]+$', account_id):
+        raise HTTPException(status_code=400, detail="Invalid account_id")
+
+    profiles_dir = get_hermes_home() / "user_profiles"
+    if not profiles_dir.exists():
+        raise HTTPException(status_code=404, detail="Bot not found")
+
+    # Search across all wx_* dirs for this account_id
+    for p in profiles_dir.iterdir():
+        if not p.is_dir() or not p.name.startswith("wx_"):
+            continue
+        acct_file = p / "weixin" / "accounts" / f"{account_id}.json"
+        if acct_file.exists():
+            try:
+                shutil.rmtree(str(p))
+                return {"ok": True, "removed": p.name}
+            except Exception as e:
+                _log.error("Failed to remove WeChat bot directory %s: %s", p, e)
+                raise HTTPException(status_code=500, detail=f"Failed to remove bot: {e}")
+
+    raise HTTPException(status_code=404, detail="Bot not found")
+
+
+async def _run_wechat_qr_session(session_id: str):
+    """Background coroutine: fetch QR, poll until confirmed or expired."""
+    try:
+        from gateway.platforms.weixin import (
+            _api_get, save_weixin_account,
+            ILINK_BASE_URL, EP_GET_BOT_QR, EP_GET_QR_STATUS, QR_TIMEOUT_MS,
+        )
+        import aiohttp
+    except ImportError as e:
+        with _wechat_qr_lock:
+            _wechat_qr_sessions[session_id].update({
+                "status": "error",
+                "error": f"WeChat dependencies not available: {e}",
+            })
+        return
+
+    try:
+        async with aiohttp.ClientSession(trust_env=True) as http_session:
+            # Step 1: Get QR code
+            try:
+                qr_resp = await _api_get(
+                    http_session,
+                    base_url=ILINK_BASE_URL,
+                    endpoint=f"{EP_GET_BOT_QR}?bot_type=3",
+                    timeout_ms=QR_TIMEOUT_MS
+                )
+            except Exception as e:
+                with _wechat_qr_lock:
+                    _wechat_qr_sessions[session_id].update({
+                        "status": "error",
+                        "error": f"Failed to fetch QR code: {e}",
+                    })
+                return
+
+            qrcode_value = str(qr_resp.get("qrcode") or "")
+            qrcode_url = str(qr_resp.get("qrcode_img_content") or "")
+
+            if not qrcode_value:
+                with _wechat_qr_lock:
+                    _wechat_qr_sessions[session_id].update({
+                        "status": "error",
+                        "error": "QR response missing qrcode",
+                    })
+                return
+
+            # Generate QR code image as base64 data URL
+            qr_data_url = _generate_qr_code_image(qrcode_url or qrcode_value)
+
+            with _wechat_qr_lock:
+                _wechat_qr_sessions[session_id].update({
+                    "status": "wait",
+                    "qr_data": qr_data_url,
+                    "qr_value": qrcode_value,
+                })
+
+            # Step 2: Poll for scan status
+            current_base = ILINK_BASE_URL
+            deadline = time.time() + 480  # 8 minutes timeout
+            refresh_count = 0
+
+            while time.time() < deadline:
+                try:
+                    status_resp = await _api_get(
+                        http_session,
+                        base_url=current_base,
+                        endpoint=f"{EP_GET_QR_STATUS}?qrcode={qrcode_value}",
+                        timeout_ms=QR_TIMEOUT_MS
+                    )
+                except asyncio.TimeoutError:
+                    await asyncio.sleep(2)
+                    continue
+                except Exception as e:
+                    _log.warning("WeChat QR poll error: %s", e)
+                    await asyncio.sleep(2)
+                    continue
+
+                status = str(status_resp.get("status") or "wait")
+
+                if status == "confirmed":
+                    account_id = str(status_resp.get("ilink_bot_id") or "")
+                    token = str(status_resp.get("bot_token") or "")
+                    base_url = str(status_resp.get("baseurl") or ILINK_BASE_URL)
+                    user_id = str(status_resp.get("ilink_user_id") or "")
+
+                    if not account_id or not token:
+                        with _wechat_qr_lock:
+                            _wechat_qr_sessions[session_id].update({
+                                "status": "error",
+                                "error": "QR confirmed but credential payload incomplete",
+                            })
+                        return
+
+                    # Save credentials (same as CLI)
+                    profile_dir = get_hermes_home() / "user_profiles" / f"wx_{account_id}"
+                    profile_dir.mkdir(parents=True, exist_ok=True)
+
+                    try:
+                        save_weixin_account(
+                            str(profile_dir),
+                            account_id=account_id,
+                            token=token,
+                            base_url=base_url,
+                            user_id=user_id,
+                        )
+                    except Exception as e:
+                        with _wechat_qr_lock:
+                            _wechat_qr_sessions[session_id].update({
+                                "status": "error",
+                                "error": f"Failed to save credentials: {e}",
+                            })
+                        return
+
+                    # Try hot-load (best effort, may fail if gateway not running)
+                    try:
+                        await _hotload_wechat_bot(account_id, token, base_url, profile_dir)
+                    except Exception as e:
+                        _log.info("Hot-load skipped (gateway restart needed): %s", e)
+
+                    with _wechat_qr_lock:
+                        _wechat_qr_sessions[session_id].update({
+                            "status": "confirmed",
+                            "account_id": account_id,
+                        })
+                    return
+
+                elif status == "expired":
+                    refresh_count += 1
+                    if refresh_count > 3:
+                        with _wechat_qr_lock:
+                            _wechat_qr_sessions[session_id]["status"] = "expired"
+                        return
+
+                    # Try to refresh QR code
+                    try:
+                        qr_resp = await _api_get(
+                            http_session,
+                            base_url=ILINK_BASE_URL,
+                            endpoint=f"{EP_GET_BOT_QR}?bot_type=3",
+                            timeout_ms=QR_TIMEOUT_MS
+                        )
+                        qrcode_value = str(qr_resp.get("qrcode") or "")
+                        qrcode_url = str(qr_resp.get("qrcode_img_content") or "")
+
+                        # Generate new QR code image
+                        qr_data_url = _generate_qr_code_image(qrcode_url or qrcode_value)
+
+                        with _wechat_qr_lock:
+                            _wechat_qr_sessions[session_id].update({
+                                "qr_data": qr_data_url,
+                                "qr_value": qrcode_value,
+                            })
+                    except Exception as e:
+                        _log.error("WeChat QR refresh failed: %s", e)
+                        with _wechat_qr_lock:
+                            _wechat_qr_sessions[session_id]["status"] = "expired"
+                        return
+
+                elif status == "scaned_but_redirect":
+                    redirect = str(status_resp.get("redirect_host") or "")
+                    if redirect:
+                        current_base = f"https://{redirect}"
+
+                # Update status for frontend polling
+                with _wechat_qr_lock:
+                    _wechat_qr_sessions[session_id]["status"] = status
+
+                await asyncio.sleep(2)
+
+            # Timeout
+            with _wechat_qr_lock:
+                _wechat_qr_sessions[session_id]["status"] = "expired"
+
+    except Exception as e:
+        _log.exception("WeChat QR session error: %s", e)
+        with _wechat_qr_lock:
+            _wechat_qr_sessions[session_id].update({
+                "status": "error",
+                "error": str(e),
+            })
+
+
+async def _hotload_wechat_bot(account_id: str, token: str, base_url: str, profile_dir: Path):
+    """Attempt to hot-load the new bot into the running gateway (best effort)."""
+    try:
+        # This is a best-effort attempt - will fail if gateway not running
+        from gateway.platforms.weixin_multi_user import WeixinMultiBotCoordinator
+        from gateway.config import PlatformConfig
+
+        # Try to get the running gateway's coordinator
+        # Note: This requires gateway.run to expose _current_gateway_runner
+        # For now, we'll skip hot-load and require gateway restart
+        _log.info("Hot-load not yet implemented - gateway restart required for new bot")
+
+    except Exception as e:
+        _log.debug("Hot-load failed (expected if gateway not running): %s", e)
 
 
 # ---------------------------------------------------------------------------

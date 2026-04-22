@@ -198,6 +198,17 @@ export const api = {
     fetchJSON<PluginManifestResponse[]>("/api/dashboard/plugins"),
   rescanPlugins: () =>
     fetchJSON<{ ok: boolean; count: number }>("/api/dashboard/plugins/rescan"),
+
+  // WeChat bot management
+  listWeChatBots: () => fetchJSON<WeChatBotsResponse>("/api/wechat/bots"),
+  startWeChatQR: () =>
+    fetchJSON<WeChatQRSession>("/api/wechat/qr-start", { method: "POST" }),
+  pollWeChatQR: (sessionId: string) =>
+    fetchJSON<WeChatQRPoll>(`/api/wechat/qr-poll/${encodeURIComponent(sessionId)}`),
+  deleteWeChatBot: (accountId: string) =>
+    fetchJSON<{ ok: boolean; removed: string }>(`/api/wechat/bots/${encodeURIComponent(accountId)}`, {
+      method: "DELETE",
+    }),
 };
 
 export interface PlatformStatus {
@@ -453,4 +464,27 @@ export interface PluginManifestResponse {
   css?: string | null;
   has_api: boolean;
   source: string;
+}
+
+// ── WeChat bot management types ────────────────────────────────────────
+
+export interface WeChatBot {
+  account_id: string;
+  user_id: string;
+  profile_dir: string;
+}
+
+export interface WeChatBotsResponse {
+  bots: WeChatBot[];
+}
+
+export interface WeChatQRSession {
+  session_id: string;
+}
+
+export interface WeChatQRPoll {
+  status: "starting" | "wait" | "scaned" | "confirmed" | "expired" | "error";
+  qr_data: string | null;
+  account_id: string | null;
+  error?: string | null;
 }

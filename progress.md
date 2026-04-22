@@ -1,5 +1,170 @@
 # Session Progress Log
 
+## Session: 2026-04-22 (feat-014: WeChat Bot Self-Service Web UI)
+
+### Background
+
+After implementing multi-user WeChat support (feat-011), users could only be added via CLI command `hermes gateway wechat-add-user`. This required administrator access and was not suitable for public deployment where users need to bind their own WeChat accounts.
+
+### Completed
+
+- **feat-014**: WeChat Bot Self-Service via Web UI (6 commits)
+
+  **Phase 1: Backend API Endpoints** (`hermes_cli/web_server.py`)
+  - Added 4 WeChat management endpoints:
+    - `POST /api/wechat/qr-start` - Start QR login session
+    - `GET /api/wechat/qr-poll/{session_id}` - Poll scan status
+    - `GET /api/wechat/bots` - List all bots
+    - `DELETE /api/wechat/bots/{account_id}` - Remove bot
+  - Added `_generate_qr_code_image()` - Generate QR as base64 PNG
+  - Added `_run_wechat_qr_session()` - Background polling coroutine
+  - Added `_hotload_wechat_bot()` - Attempt hot-load (placeholder)
+  - In-memory session state: `_wechat_qr_sessions` dict with lock
+
+  **Phase 2: Frontend API Client** (`web/src/lib/api.ts`)
+  - Added TypeScript types: `WeChatBot`, `WeChatQRSession`, `WeChatQRPoll`, `WeChatBotsResponse`
+  - Added 4 API methods: `listWeChatBots`, `startWeChatQR`, `pollWeChatQR`, `deleteWeChatBot`
+
+  **Phase 3: Dashboard Page** (`web/src/pages/WeChatBotsPage.tsx`)
+  - Bot list with account_id, user_id, delete button
+  - "Add Bot" button triggers QR dialog
+  - QR dialog with real-time status updates (starting/wait/scaned/confirmed/expired/error)
+  - Polling every 2 seconds with automatic cleanup
+  - Share link generation and copy button
+
+  **Phase 4: Routing Integration** (`web/src/App.tsx`)
+  - Added `/wechat` route to navigation
+  - Added `WeChatBotsPage` component to routes
+
+  **Phase 5: Standalone QR Page** (`hermes_cli/web_server.py`)
+  - Added `GET /qr/{session_id}` endpoint - Returns standalone HTML page
+  - Beautiful purple gradient design with real-time polling
+  - No authentication required - users can access directly
+  - Auto-updates status every 2 seconds
+
+  **Phase 6: Bug Fixes**
+  - ✅ QR code generation: Generate as base64 PNG (not raw URL)
+  - ✅ Authentication bypass: Allow `/api/wechat/qr-poll/*` without auth
+  - ✅ Polling leak: Use useRef to track and clear timeouts on dialog close
+
+### Test Results
+
+- ✅ Frontend build: No errors
+- ✅ Python syntax: No errors
+- ✅ Manual testing: All features working
+- ✅ Polling cleanup: No duplicate requests after cancel
+
+### Key Design Decisions
+
+1. **Two-tier access model**:
+   - Dashboard: Admin view with bot list and management
+   - Standalone page: User view with only QR code (no dashboard access)
+
+2. **QR code generation**:
+   - Server-side generation using `qrcode` library
+   - Base64 PNG format (not external URL)
+   - Avoids CORS and connection issues
+
+3. **Polling architecture**:
+   - Backend: Async coroutine with 2-second intervals
+   - Frontend: useRef-tracked setTimeout with cleanup
+   - Standalone page: JavaScript setInterval with cleanup
+
+4. **Security model**:
+   - Dashboard endpoints: Require Bearer token
+   - QR poll endpoint: Public (no auth)
+   - Standalone page: Public (session ID as secret)
+
+### Architecture Notes
+
+- **Session management**: In-memory dict with threading.Lock
+- **QR lifecycle**: 8 minutes timeout, auto-refresh on expiry (up to 3 times)
+- **Hot-load**: Placeholder for future implementation (requires gateway restart currently)
+- **Share links**: Format `http://localhost:9119/qr/{session_id}`
+
+### Environment Issues Encountered
+
+1. **Package manager confusion**:
+   - ❌ Tried: `pip install qrcode[pil]` → Error: pip not found
+   - ❌ Tried: `python -m pip install qrcode[pil]` → Error: No module named pip
+   - ✅ Solution: `uv pip install qrcode[pil]` (uv-managed venv)
+
+2. **Dashboard command**:
+   - ❌ Tried: `hermes web` → Wrong command
+   - ✅ Solution: `hermes dashboard` (correct command)
+
+3. **QR code display**:
+   - ❌ Issue: `ERR_CONNECTION_RESET` when loading QR URL
+   - ✅ Solution: Generate QR as base64 image server-side
+
+4. **Authentication**:
+   - ❌ Issue: 401 Unauthorized on `/api/wechat/qr-poll`
+   - ✅ Solution: Add to public paths in auth middleware
+
+5. **Polling leak**:
+   - ❌ Issue: Multiple polling loops after cancel → rapid refresh
+   - ✅ Solution: Use useRef to track and clear timeouts
+
+### Files Modified
+
+```
+hermes_cli/web_server.py         | +470 lines (API endpoints + standalone page)
+web/src/pages/WeChatBotsPage.tsx | +290 lines (Dashboard page)
+web/src/lib/api.ts               | +34 lines (TypeScript types + API calls)
+web/src/App.tsx                  | +3 lines (Route + nav)
+ENVIRONMENT_NOTES.md             | +250 lines (New file - environment docs)
+progress.md                      | This update
+```
+
+### Commit History
+
+```
+e5345370 fix: Stop QR polling leak when dialog is cancelled
+04064fdb debug: Add logging to QR page endpoint
+33636e1d fix: Allow unauthenticated access to QR poll endpoint
+f934ec42 feat: Add standalone QR code page for user self-service
+42530770 fix: Generate QR code as base64 image for Web UI
+a78a4c63 feat-013: WeChat Bot Self-Service via Web UI
+```
+
+### Usage Scenarios
+
+**Scenario 1: Enterprise Internal Deployment**
+- Admin deploys Hermes Dashboard on internal network
+- Employees receive share links via email/chat
+- Employees scan QR codes to bind their WeChat accounts
+- No need for employees to access Dashboard
+
+**Scenario 2: Public Service**
+- Admin deploys on public server
+- Users receive links via WeChat/email
+- Users scan QR codes from anywhere
+- Simple user experience, no registration needed
+
+**Scenario 3: Batch Addition**
+- Admin generates multiple links
+- Sends to multiple users simultaneously
+- Users bind concurrently without interference
+- Supports parallel binding
+
+### Open Questions
+
+1. **Hot-load implementation**: Currently requires gateway restart after adding bot
+2. **Session cleanup**: No automatic cleanup of expired sessions (memory leak risk)
+3. **QR refresh**: Should standalone page auto-refresh expired QR codes?
+4. **Link expiration**: Should share links have a shorter TTL than 8 minutes?
+5. **Internationalization**: Should standalone page support English?
+
+### Next Steps
+
+1. Implement hot-load functionality (add bot without gateway restart)
+2. Add session TTL cleanup (auto-delete expired sessions)
+3. Add QR auto-refresh on standalone page
+4. Add internationalization support
+5. Add bot status display (online/offline)
+
+---
+
 ## Session: 2026-04-22 (feat-011: Multi-User WeChat Support via iLink Bot API)
 
 ### Background

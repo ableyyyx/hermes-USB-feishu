@@ -14,6 +14,7 @@ import LogsPage from "@/pages/LogsPage";
 import AnalyticsPage from "@/pages/AnalyticsPage";
 import CronPage from "@/pages/CronPage";
 import SkillsPage from "@/pages/SkillsPage";
+import WeChatBotsPage from "@/pages/WeChatBotsPage";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { useI18n } from "@/i18n";
@@ -38,6 +39,7 @@ const BUILTIN_NAV: NavItem[] = [
   { path: "/logs", labelKey: "logs", label: "Logs", icon: FileText },
   { path: "/cron", labelKey: "cron", label: "Cron", icon: Clock },
   { path: "/skills", labelKey: "skills", label: "Skills", icon: Package },
+  { path: "/wechat", label: "WeChat Bots", icon: MessageSquare },
   { path: "/config", labelKey: "config", label: "Config", icon: Settings },
   { path: "/env", labelKey: "keys", label: "Keys", icon: KeyRound },
 ];
@@ -163,6 +165,7 @@ export default function App() {
           <Route path="/logs" element={<LogsPage />} />
           <Route path="/cron" element={<CronPage />} />
           <Route path="/skills" element={<SkillsPage />} />
+          <Route path="/wechat" element={<WeChatBotsPage />} />
           <Route path="/config" element={<ConfigPage />} />
           <Route path="/env" element={<EnvPage />} />
 
