@@ -103,6 +103,7 @@ _PUBLIC_API_PATHS: frozenset = frozenset({
     "/api/dashboard/themes",
     "/api/dashboard/plugins",
     "/api/dashboard/plugins/rescan",
+    "/api/wechat/qr-poll",  # Public: users need to poll QR status without auth
 })
 
 
@@ -121,6 +122,9 @@ def _require_token(request: Request) -> None:
 async def auth_middleware(request: Request, call_next):
     """Require the session token on all /api/ routes except the public list."""
     path = request.url.path
+    # Allow /api/wechat/qr-poll/* without auth (for standalone QR page)
+    if path.startswith("/api/wechat/qr-poll/"):
+        return await call_next(request)
     if path.startswith("/api/") and path not in _PUBLIC_API_PATHS and not path.startswith("/api/plugins/"):
         auth = request.headers.get("authorization", "")
         expected = f"Bearer {_SESSION_TOKEN}"
