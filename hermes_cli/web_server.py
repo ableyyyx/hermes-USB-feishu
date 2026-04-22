@@ -1962,6 +1962,184 @@ async def wechat_qr_poll(session_id: str):
     }
 
 
+@app.get("/qr/{session_id}")
+async def wechat_qr_page(session_id: str):
+    """Standalone QR code page for users (no auth required)."""
+    # This is a public page - users don't need dashboard access
+    html = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>微信机器人绑定</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }}
+        .container {{
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+        }}
+        h1 {{
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }}
+        .subtitle {{
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }}
+        .qr-container {{
+            background: #f5f5f5;
+            border-radius: 15px;
+            padding: 30px;
+            margin: 20px 0;
+        }}
+        #qr-image {{
+            max-width: 100%;
+            height: auto;
+            border-radius: 10px;
+        }}
+        .status {{
+            font-size: 18px;
+            font-weight: 500;
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 10px;
+        }}
+        .status.loading {{ background: #e3f2fd; color: #1976d2; }}
+        .status.wait {{ background: #e8f5e9; color: #388e3c; }}
+        .status.scaned {{ background: #fff3e0; color: #f57c00; }}
+        .status.confirmed {{ background: #e8f5e9; color: #2e7d32; }}
+        .status.expired {{ background: #ffebee; color: #c62828; }}
+        .status.error {{ background: #ffebee; color: #c62828; }}
+        .spinner {{
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }}
+        @keyframes spin {{
+            0% {{ transform: rotate(0deg); }}
+            100% {{ transform: rotate(360deg); }}
+        }}
+        .success-icon {{
+            font-size: 60px;
+            color: #4caf50;
+            margin: 20px 0;
+        }}
+        .footer {{
+            margin-top: 30px;
+            color: #999;
+            font-size: 12px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 微信机器人绑定</h1>
+        <p class="subtitle">请使用微信扫描下方二维码</p>
+
+        <div id="status-container"></div>
+        <div class="qr-container" id="qr-container"></div>
+
+        <div class="footer">
+            Powered by Hermes Agent
+        </div>
+    </div>
+
+    <script>
+        const sessionId = '{session_id}';
+        let pollInterval;
+
+        async function pollStatus() {{
+            try {{
+                const response = await fetch(`/api/wechat/qr-poll/${{sessionId}}`);
+                if (!response.ok) {{
+                    showError('会话已过期或不存在');
+                    clearInterval(pollInterval);
+                    return;
+                }}
+
+                const data = await response.json();
+                updateUI(data);
+
+                if (data.status === 'confirmed' || data.status === 'expired' || data.status === 'error') {{
+                    clearInterval(pollInterval);
+                }}
+            }} catch (error) {{
+                console.error('Poll error:', error);
+            }}
+        }}
+
+        function updateUI(data) {{
+            const statusContainer = document.getElementById('status-container');
+            const qrContainer = document.getElementById('qr-container');
+
+            switch(data.status) {{
+                case 'starting':
+                    statusContainer.innerHTML = '<div class="status loading">正在生成二维码...</div><div class="spinner"></div>';
+                    qrContainer.innerHTML = '';
+                    break;
+
+                case 'wait':
+                    statusContainer.innerHTML = '<div class="status wait">请用微信扫描二维码</div>';
+                    if (data.qr_data) {{
+                        qrContainer.innerHTML = `<img id="qr-image" src="${{data.qr_data}}" alt="QR Code">`;
+                    }}
+                    break;
+
+                case 'scaned':
+                    statusContainer.innerHTML = '<div class="status scaned">已扫码，请在微信中确认...</div><div class="spinner"></div>';
+                    break;
+
+                case 'confirmed':
+                    statusContainer.innerHTML = '<div class="success-icon">✓</div><div class="status confirmed">绑定成功！</div>';
+                    qrContainer.innerHTML = '<p style="color: #666; margin-top: 20px;">您的微信机器人已成功绑定<br>Account ID: ' + (data.account_id || '') + '</p>';
+                    break;
+
+                case 'expired':
+                    statusContainer.innerHTML = '<div class="status expired">二维码已过期</div>';
+                    qrContainer.innerHTML = '<p style="color: #999; margin-top: 20px;">请联系管理员重新生成二维码</p>';
+                    break;
+
+                case 'error':
+                    statusContainer.innerHTML = '<div class="status error">绑定失败</div>';
+                    qrContainer.innerHTML = '<p style="color: #999; margin-top: 20px;">' + (data.error || '未知错误') + '</p>';
+                    break;
+            }}
+        }}
+
+        function showError(message) {{
+            document.getElementById('status-container').innerHTML = '<div class="status error">' + message + '</div>';
+            document.getElementById('qr-container').innerHTML = '';
+        }}
+
+        // Start polling
+        pollStatus();
+        pollInterval = setInterval(pollStatus, 2000);
+    </script>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
 @app.get("/api/wechat/bots")
 async def list_wechat_bots():
     """List all configured WeChat bots from user_profiles/wx_*/"""

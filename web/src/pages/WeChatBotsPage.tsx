@@ -11,7 +11,7 @@ export default function WeChatBotsPage() {
   const [bots, setBots] = useState<WeChatBot[]>([]);
   const [loading, setLoading] = useState(true);
   const [showQRDialog, setShowQRDialog] = useState(false);
-  const [qrSession, setQRSession] = useState<WeChatQRPoll | null>(null);
+  const [qrSession, setQRSession] = useState<(WeChatQRPoll & { shareUrl?: string }) | null>(null);
   const { toast, showToast } = useToast();
 
   const loadBots = () => {
@@ -32,6 +32,11 @@ export default function WeChatBotsPage() {
       const resp = await api.startWeChatQR();
       setShowQRDialog(true);
       setQRSession({ status: "starting", qr_data: null, account_id: null });
+
+      // Generate shareable link
+      const shareUrl = `${window.location.origin}/qr/${resp.session_id}`;
+      setQRSession(prev => prev ? { ...prev, shareUrl } : null);
+
       // Start polling
       pollQRStatus(resp.session_id);
     } catch (err) {
@@ -42,7 +47,8 @@ export default function WeChatBotsPage() {
   const pollQRStatus = async (sid: string) => {
     try {
       const status = await api.pollWeChatQR(sid);
-      setQRSession(status);
+      // Preserve shareUrl when updating status
+      setQRSession(prev => prev ? { ...status, shareUrl: prev.shareUrl } : status);
 
       if (status.status === "confirmed") {
         showToast("WeChat bot added successfully!", "success");
@@ -203,6 +209,35 @@ export default function WeChatBotsPage() {
                       <p className="text-sm text-muted-foreground">
                         使用微信扫描上方二维码
                       </p>
+
+                      {qrSession.shareUrl && (
+                        <div className="w-full mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                          <p className="text-sm font-medium text-blue-900 mb-2">
+                            📤 分享链接给用户
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={qrSession.shareUrl}
+                              readOnly
+                              className="flex-1 px-3 py-2 text-sm bg-white border border-blue-300 rounded"
+                              onClick={(e) => (e.target as HTMLInputElement).select()}
+                            />
+                            <Button
+                              size="sm"
+                              onClick={() => {
+                                navigator.clipboard.writeText(qrSession.shareUrl!);
+                                showToast("链接已复制", "success");
+                              }}
+                            >
+                              复制
+                            </Button>
+                          </div>
+                          <p className="text-xs text-blue-700 mt-2">
+                            用户访问此链接即可扫码绑定，无需登录 Dashboard
+                          </p>
+                        </div>
+                      )}
                     </div>
                   )}
 
