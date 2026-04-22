@@ -15,12 +15,15 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import secrets
+import shutil
 import sys
 import threading
 import time
 import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -1882,6 +1885,293 @@ async def delete_cron_job(job_id: str):
     if not remove_job(job_id):
         raise HTTPException(status_code=404, detail="Job not found")
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# WeChat Bot Management endpoints
+# ---------------------------------------------------------------------------
+
+# In-memory QR session state (not persisted)
+_wechat_qr_sessions: Dict[str, Dict[str, Any]] = {}
+_wechat_qr_lock = threading.Lock()
+
+
+@app.post("/api/wechat/qr-start")
+async def wechat_qr_start():
+    """Start a new WeChat QR login session. Returns session_id."""
+    session_id = uuid.uuid4().hex
+    with _wechat_qr_lock:
+        _wechat_qr_sessions[session_id] = {
+            "status": "starting",
+            "started_at": time.time(),
+            "qr_data": None,
+            "qr_value": None,
+            "account_id": None,
+            "error": None,
+        }
+    # Launch background task that calls iLink API and polls
+    asyncio.create_task(_run_wechat_qr_session(session_id))
+    return {"session_id": session_id}
+
+
+@app.get("/api/wechat/qr-poll/{session_id}")
+async def wechat_qr_poll(session_id: str):
+    """Poll QR login session status. Frontend calls this every 2 seconds."""
+    with _wechat_qr_lock:
+        sess = _wechat_qr_sessions.get(session_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {
+        "status": sess["status"],
+        "qr_data": sess.get("qr_data"),
+        "account_id": sess.get("account_id"),
+        "error": sess.get("error"),
+    }
+
+
+@app.get("/api/wechat/bots")
+async def list_wechat_bots():
+    """List all configured WeChat bots from user_profiles/wx_*/"""
+    bots = []
+    profiles_dir = get_hermes_home() / "user_profiles"
+    if not profiles_dir.exists():
+        return {"bots": []}
+
+    for p in profiles_dir.iterdir():
+        if not p.is_dir() or not p.name.startswith("wx_"):
+            continue
+        accounts_dir = p / "weixin" / "accounts"
+        if not accounts_dir.exists():
+            continue
+        for acct_file in accounts_dir.glob("*.json"):
+            try:
+                creds = json.loads(acct_file.read_text())
+                bots.append({
+                    "account_id": creds.get("account_id", acct_file.stem),
+                    "user_id": creds.get("user_id", ""),
+                    "profile_dir": p.name,
+                })
+            except Exception as e:
+                _log.warning("Failed to read WeChat bot credentials %s: %s", acct_file, e)
+    return {"bots": bots}
+
+
+@app.delete("/api/wechat/bots/{account_id}")
+async def delete_wechat_bot(account_id: str):
+    """Remove a WeChat bot profile directory."""
+    # Validate account_id: only allow safe chars (alphanum, @, ., -, _)
+    if not re.match(r'^[a-zA-Z0-9@._-]+$', account_id):
+        raise HTTPException(status_code=400, detail="Invalid account_id")
+
+    profiles_dir = get_hermes_home() / "user_profiles"
+    if not profiles_dir.exists():
+        raise HTTPException(status_code=404, detail="Bot not found")
+
+    # Search across all wx_* dirs for this account_id
+    for p in profiles_dir.iterdir():
+        if not p.is_dir() or not p.name.startswith("wx_"):
+            continue
+        acct_file = p / "weixin" / "accounts" / f"{account_id}.json"
+        if acct_file.exists():
+            try:
+                shutil.rmtree(str(p))
+                return {"ok": True, "removed": p.name}
+            except Exception as e:
+                _log.error("Failed to remove WeChat bot directory %s: %s", p, e)
+                raise HTTPException(status_code=500, detail=f"Failed to remove bot: {e}")
+
+    raise HTTPException(status_code=404, detail="Bot not found")
+
+
+async def _run_wechat_qr_session(session_id: str):
+    """Background coroutine: fetch QR, poll until confirmed or expired."""
+    try:
+        from gateway.platforms.weixin import (
+            _api_get, save_weixin_account,
+            ILINK_BASE_URL, EP_GET_BOT_QR, EP_GET_QR_STATUS, QR_TIMEOUT_MS,
+        )
+        import aiohttp
+    except ImportError as e:
+        with _wechat_qr_lock:
+            _wechat_qr_sessions[session_id].update({
+                "status": "error",
+                "error": f"WeChat dependencies not available: {e}",
+            })
+        return
+
+    try:
+        async with aiohttp.ClientSession(trust_env=True) as http_session:
+            # Step 1: Get QR code
+            try:
+                qr_resp = await _api_get(
+                    http_session,
+                    base_url=ILINK_BASE_URL,
+                    endpoint=f"{EP_GET_BOT_QR}?bot_type=3",
+                    timeout_ms=QR_TIMEOUT_MS
+                )
+            except Exception as e:
+                with _wechat_qr_lock:
+                    _wechat_qr_sessions[session_id].update({
+                        "status": "error",
+                        "error": f"Failed to fetch QR code: {e}",
+                    })
+                return
+
+            qrcode_value = str(qr_resp.get("qrcode") or "")
+            qrcode_url = str(qr_resp.get("qrcode_img_content") or "")
+
+            if not qrcode_value:
+                with _wechat_qr_lock:
+                    _wechat_qr_sessions[session_id].update({
+                        "status": "error",
+                        "error": "QR response missing qrcode",
+                    })
+                return
+
+            with _wechat_qr_lock:
+                _wechat_qr_sessions[session_id].update({
+                    "status": "wait",
+                    "qr_data": qrcode_url or qrcode_value,
+                    "qr_value": qrcode_value,
+                })
+
+            # Step 2: Poll for scan status
+            current_base = ILINK_BASE_URL
+            deadline = time.time() + 480  # 8 minutes timeout
+            refresh_count = 0
+
+            while time.time() < deadline:
+                try:
+                    status_resp = await _api_get(
+                        http_session,
+                        base_url=current_base,
+                        endpoint=f"{EP_GET_QR_STATUS}?qrcode={qrcode_value}",
+                        timeout_ms=QR_TIMEOUT_MS
+                    )
+                except asyncio.TimeoutError:
+                    await asyncio.sleep(2)
+                    continue
+                except Exception as e:
+                    _log.warning("WeChat QR poll error: %s", e)
+                    await asyncio.sleep(2)
+                    continue
+
+                status = str(status_resp.get("status") or "wait")
+
+                if status == "confirmed":
+                    account_id = str(status_resp.get("ilink_bot_id") or "")
+                    token = str(status_resp.get("bot_token") or "")
+                    base_url = str(status_resp.get("baseurl") or ILINK_BASE_URL)
+                    user_id = str(status_resp.get("ilink_user_id") or "")
+
+                    if not account_id or not token:
+                        with _wechat_qr_lock:
+                            _wechat_qr_sessions[session_id].update({
+                                "status": "error",
+                                "error": "QR confirmed but credential payload incomplete",
+                            })
+                        return
+
+                    # Save credentials (same as CLI)
+                    profile_dir = get_hermes_home() / "user_profiles" / f"wx_{account_id}"
+                    profile_dir.mkdir(parents=True, exist_ok=True)
+
+                    try:
+                        save_weixin_account(
+                            str(profile_dir),
+                            account_id=account_id,
+                            token=token,
+                            base_url=base_url,
+                            user_id=user_id,
+                        )
+                    except Exception as e:
+                        with _wechat_qr_lock:
+                            _wechat_qr_sessions[session_id].update({
+                                "status": "error",
+                                "error": f"Failed to save credentials: {e}",
+                            })
+                        return
+
+                    # Try hot-load (best effort, may fail if gateway not running)
+                    try:
+                        await _hotload_wechat_bot(account_id, token, base_url, profile_dir)
+                    except Exception as e:
+                        _log.info("Hot-load skipped (gateway restart needed): %s", e)
+
+                    with _wechat_qr_lock:
+                        _wechat_qr_sessions[session_id].update({
+                            "status": "confirmed",
+                            "account_id": account_id,
+                        })
+                    return
+
+                elif status == "expired":
+                    refresh_count += 1
+                    if refresh_count > 3:
+                        with _wechat_qr_lock:
+                            _wechat_qr_sessions[session_id]["status"] = "expired"
+                        return
+
+                    # Try to refresh QR code
+                    try:
+                        qr_resp = await _api_get(
+                            http_session,
+                            base_url=ILINK_BASE_URL,
+                            endpoint=f"{EP_GET_BOT_QR}?bot_type=3",
+                            timeout_ms=QR_TIMEOUT_MS
+                        )
+                        qrcode_value = str(qr_resp.get("qrcode") or "")
+                        qrcode_url = str(qr_resp.get("qrcode_img_content") or "")
+
+                        with _wechat_qr_lock:
+                            _wechat_qr_sessions[session_id].update({
+                                "qr_data": qrcode_url or qrcode_value,
+                                "qr_value": qrcode_value,
+                            })
+                    except Exception as e:
+                        _log.error("WeChat QR refresh failed: %s", e)
+                        with _wechat_qr_lock:
+                            _wechat_qr_sessions[session_id]["status"] = "expired"
+                        return
+
+                elif status == "scaned_but_redirect":
+                    redirect = str(status_resp.get("redirect_host") or "")
+                    if redirect:
+                        current_base = f"https://{redirect}"
+
+                # Update status for frontend polling
+                with _wechat_qr_lock:
+                    _wechat_qr_sessions[session_id]["status"] = status
+
+                await asyncio.sleep(2)
+
+            # Timeout
+            with _wechat_qr_lock:
+                _wechat_qr_sessions[session_id]["status"] = "expired"
+
+    except Exception as e:
+        _log.exception("WeChat QR session error: %s", e)
+        with _wechat_qr_lock:
+            _wechat_qr_sessions[session_id].update({
+                "status": "error",
+                "error": str(e),
+            })
+
+
+async def _hotload_wechat_bot(account_id: str, token: str, base_url: str, profile_dir: Path):
+    """Attempt to hot-load the new bot into the running gateway (best effort)."""
+    try:
+        # This is a best-effort attempt - will fail if gateway not running
+        from gateway.platforms.weixin_multi_user import WeixinMultiBotCoordinator
+        from gateway.config import PlatformConfig
+
+        # Try to get the running gateway's coordinator
+        # Note: This requires gateway.run to expose _current_gateway_runner
+        # For now, we'll skip hot-load and require gateway restart
+        _log.info("Hot-load not yet implemented - gateway restart required for new bot")
+
+    except Exception as e:
+        _log.debug("Hot-load failed (expected if gateway not running): %s", e)
 
 
 # ---------------------------------------------------------------------------
