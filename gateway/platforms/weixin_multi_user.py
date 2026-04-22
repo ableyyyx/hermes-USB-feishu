@@ -86,11 +86,16 @@ class WeixinMultiBotCoordinator:
             hermes_home=str(profile_dir),
         )
 
+        # Set up message handlers (same as gateway does for regular adapters)
+        adapter.set_message_handler(self._gateway._handle_message)
+        adapter.set_fatal_error_handler(self._gateway._handle_adapter_fatal_error)
+        adapter.set_session_store(self._gateway.session_store)
+        adapter.set_busy_session_handler(self._gateway._handle_active_session_busy_message)
+
         success = await adapter.connect()
         if success:
             self._adapters[account_id] = adapter
-            if hasattr(self._gateway, '_adapters'):
-                self._gateway._adapters[Platform.WEIXIN] = adapter
+            # Don't overwrite _gateway._adapters[Platform.WEIXIN] - multi-bot coordinator manages its own adapters
             return True
         else:
             logger.error(f"Failed to connect WeChat bot {account_id}")

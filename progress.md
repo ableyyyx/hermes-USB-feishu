@@ -64,6 +64,47 @@ Hermes only supported a single WeChat bot account per gateway instance. Authoriz
 - Coordinator auto-discovers bots from filesystem on gateway startup
 - Multiple adapters registered with gateway's message routing
 
+### Bug Fix: Message Handler Registration (2026-04-22)
+
+**Problem**: After adding two WeChat bots via `hermes gateway wechat-add-user`, bots received messages but did not respond. Error logs showed "Session expired; pausing for 10 minutes".
+
+**Root Causes** (3 issues):
+1. **Expired single-bot config**: `.env` file contained old `WEIXIN_*` environment variables with expired token (`04d9c4f506eb@im.bot`), causing "Session expired" errors
+2. **Missing message handlers**: Multi-bot coordinator created adapters but didn't set `message_handler`, so messages couldn't be routed to gateway for processing
+3. **Incorrect adapter registration**: Coordinator overwrote `_gateway._adapters[Platform.WEIXIN]` for each bot, only keeping the last one
+
+**Diagnosis Process**:
+- Checked gateway logs: bots loaded successfully but no "inbound message" logs
+- Compared with working logs from 2026-04-21: missing `gateway.run: inbound message` line
+- Traced code: `WeixinAdapter._process_message()` → `handle_message()` → no handler set
+- Found gateway sets handlers at line 1964 in `run.py`, but coordinator didn't
+
+**Fix Applied** (`gateway/platforms/weixin_multi_user.py`):
+```python
+# Added in _create_adapter_for_bot() before adapter.connect():
+adapter.set_message_handler(self._gateway._handle_message)
+adapter.set_fatal_error_handler(self._gateway._handle_adapter_fatal_error)
+adapter.set_session_store(self._gateway.session_store)
+adapter.set_busy_session_handler(self._gateway._handle_active_session_busy_message)
+
+# Removed incorrect line:
+# self._gateway._adapters[Platform.WEIXIN] = adapter
+```
+
+**Environment Fix** (`.env`):
+- Removed all old `WEIXIN_*` environment variables (ACCOUNT_ID, TOKEN, BASE_URL, etc.)
+- Added `GATEWAY_ALLOW_ALL_USERS=true` to allow all users to access bots
+
+**Verification**:
+- ✅ Gateway loads 2 WeChat bots successfully
+- ✅ No "Session expired" errors
+- ✅ Messages received and processed: `inbound message` → `response ready` → `Sending response`
+- ✅ Response time: ~11.5s for first message
+
+**Files Modified**:
+- `gateway/platforms/weixin_multi_user.py` - Added handler registration
+- `.env` - Removed old WEIXIN_* config, added GATEWAY_ALLOW_ALL_USERS
+
 ### Open Questions
 
 1. **End-to-end testing**: Requires real iLink Bot API credentials and WeChat accounts
