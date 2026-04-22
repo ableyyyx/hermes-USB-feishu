@@ -1052,10 +1052,10 @@ class WeixinAdapter(BasePlatformAdapter):
     # fallback "send-final-only" path so the cursor (▉) is never left visible.
     SUPPORTS_MESSAGE_EDITING = False
 
-    def __init__(self, config: PlatformConfig):
+    def __init__(self, config: PlatformConfig, hermes_home: str = ""):
         super().__init__(config, Platform.WEIXIN)
         extra = config.extra or {}
-        hermes_home = str(get_hermes_home())
+        hermes_home = hermes_home or str(get_hermes_home())
         self._hermes_home = hermes_home
         self._token_store = ContextTokenStore(hermes_home)
         self._typing_cache = TypingTicketCache()
@@ -1266,7 +1266,7 @@ class WeixinAdapter(BasePlatformAdapter):
         source = self.build_source(
             chat_id=effective_chat_id,
             chat_type=chat_type,
-            user_id=sender_id,
+            user_id=f"wx_{self._account_id}" if self._account_id else sender_id,
             user_name=sender_id,
         )
         event = MessageEvent(

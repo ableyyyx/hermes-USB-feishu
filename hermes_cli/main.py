@@ -5121,6 +5121,10 @@ For more help on a command:
     # gateway setup
     gateway_subparsers.add_parser("setup", help="Configure messaging platforms")
 
+    # gateway wechat-add-user
+    wechat_add_user = gateway_subparsers.add_parser("wechat-add-user", help="Add a new WeChat bot user by generating a QR code")
+    wechat_add_user.add_argument("user_id", help="User identifier (e.g., user1, alice, etc.)")
+
     gateway_parser.set_defaults(func=cmd_gateway)
     
     # =========================================================================
