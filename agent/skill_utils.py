@@ -9,12 +9,33 @@ import logging
 import os
 import re
 import sys
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from hermes_constants import get_config_path, get_skills_dir
 
 logger = logging.getLogger(__name__)
+
+# ── User ID ContextVar for per-user skills isolation ──────────────────────
+_CURRENT_USER_ID: ContextVar[str] = ContextVar("CURRENT_USER_ID", default="")
+
+def set_current_user_id(user_id: str):
+    """Set current user ID for per-user skills isolation (called by gateway)."""
+    _CURRENT_USER_ID.set(user_id)
+
+def get_current_user_id() -> str:
+    """Get current user ID from ContextVar or environment variable."""
+    # Try ContextVar first
+    try:
+        user_id = _CURRENT_USER_ID.get()
+        if user_id:
+            return user_id
+    except LookupError:
+        pass
+
+    # Fall back to environment variable (set by gateway)
+    return os.environ.get("HERMES_CURRENT_USER_ID", "")
 
 # ── Platform mapping ──────────────────────────────────────────────────────
 
@@ -177,6 +198,10 @@ def get_external_skills_dirs() -> List[Path]:
     Each entry is expanded (``~`` and ``${VAR}``) and resolved to an absolute
     path.  Only directories that actually exist are returned.  Duplicates and
     paths that resolve to the local ``~/.hermes/skills/`` are silently skipped.
+
+    Additionally, if a user_id is set via ContextVar (in gateway mode), the user's
+    private skills directory (~/.hermes/user_skills/{user_id}/) is automatically
+    appended to the list.
     """
     config_path = get_config_path()
     if not config_path.exists():
@@ -190,15 +215,15 @@ def get_external_skills_dirs() -> List[Path]:
 
     skills_cfg = parsed.get("skills")
     if not isinstance(skills_cfg, dict):
-        return []
+        skills_cfg = {}
 
     raw_dirs = skills_cfg.get("external_dirs")
     if not raw_dirs:
-        return []
+        raw_dirs = []
     if isinstance(raw_dirs, str):
         raw_dirs = [raw_dirs]
     if not isinstance(raw_dirs, list):
-        return []
+        raw_dirs = []
 
     local_skills = get_skills_dir().resolve()
     seen: Set[Path] = set()
@@ -220,6 +245,19 @@ def get_external_skills_dirs() -> List[Path]:
             result.append(p)
         else:
             logger.debug("External skills dir does not exist, skipping: %s", p)
+
+    # Add user-specific skills directory if user_id is set (gateway mode)
+    user_id = get_current_user_id()
+    if user_id:
+        from hermes_constants import get_hermes_home
+        user_skills_dir = get_hermes_home() / "user_skills" / user_id
+        if user_skills_dir.is_dir() and user_skills_dir not in seen:
+            result.append(user_skills_dir)
+            logger.info("Added user-specific skills dir for user %s: %s", user_id, user_skills_dir)
+        else:
+            logger.debug("User skills dir does not exist or already seen: %s", user_skills_dir)
+    else:
+        logger.debug("No user_id set, skipping user-specific skills")
 
     return result
 

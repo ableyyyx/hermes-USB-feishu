@@ -9308,16 +9308,27 @@ class GatewayRunner:
     ) -> Dict[str, Any]:
         """
         Run the agent with the given message and context.
-        
+
         Returns the full result dict from run_conversation, including:
           - "final_response": str (the text to send back)
           - "messages": list (full conversation including tool calls)
           - "api_calls": int
           - "completed": bool
-        
+
         This is run in a thread pool to not block the event loop.
         Supports interruption via new messages.
         """
+        # Set user ID for per-user skills isolation (if available)
+        if source.user_id:
+            try:
+                # Set both ContextVar and environment variable for cross-thread compatibility
+                from agent.skill_utils import set_current_user_id
+                set_current_user_id(source.user_id)
+                os.environ["HERMES_CURRENT_USER_ID"] = source.user_id
+                logger.info("Set user ID for skills isolation: %s", source.user_id)
+            except Exception as e:
+                logger.warning("Failed to set user ID for skills isolation: %s", e)
+
         # ---- Proxy mode: delegate to remote API server ----
         if self._get_proxy_url():
             return await self._run_agent_via_proxy(
